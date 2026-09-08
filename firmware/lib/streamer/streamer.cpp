@@ -10,8 +10,11 @@ namespace {
   StatusFn   g_status = nullptr;
   volatile bool g_toggle = false;
 
-  // latest-frame slot
-  portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
+  // latest-frame slot.
+  // v1 is single-task: net::handle() (which runs handleStream) and
+  // net::submitFrame() are both driven from loop(), so no lock is needed.
+  // When the stream writer moves to core 0, guard g_slot* with a mutex
+  // (never a portMUX spinlock — this path reallocs).
   uint8_t*  g_slot = nullptr;
   size_t    g_slotCap = 0;
   size_t    g_slotLen = 0;
@@ -54,14 +57,9 @@ namespace {
       if (now - lastSent < 40) { delay(1); continue; }   // cap ~25 fps
       lastSent = now;
 
-      static uint8_t local[70000];
       size_t len = 0;
-      portENTER_CRITICAL(&g_mux);
-      if (g_slotLen && g_slotLen <= sizeof(local)) {
-        memcpy(local, g_slot, g_slotLen);
-        len = g_slotLen;
-      }
-      portEXIT_CRITICAL(&g_mux);
+      const uint8_t* frame = nullptr;
+      if (g_slotLen) { frame = g_slot; len = g_slotLen; }
       if (!len) { delay(5); continue; }
 
       char hdr[80];
@@ -69,7 +67,7 @@ namespace {
         "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
         (unsigned)len);
       if (client.write((const uint8_t*)hdr, n) != (size_t)n) break;
-      if (client.write(local, len) != len) break;
+      if (client.write(frame, len) != len) break;
       if (client.write((const uint8_t*)"\r\n", 2) != 2) break;
     }
   }
@@ -99,13 +97,14 @@ void handle() { g_server.handleClient(); }
 
 void submitFrame(const uint8_t* buf, size_t len) {
   if (!len) return;
-  portENTER_CRITICAL(&g_mux);
   if (len > g_slotCap) {
     uint8_t* p = (uint8_t*)realloc(g_slot, len);
-    if (p) { g_slot = p; g_slotCap = len; }
+    if (!p) return;               // keep the previous frame on OOM
+    g_slot = p;
+    g_slotCap = len;
   }
-  if (len <= g_slotCap) { memcpy(g_slot, buf, len); g_slotLen = len; }
-  portEXIT_CRITICAL(&g_mux);
+  memcpy(g_slot, buf, len);
+  g_slotLen = len;
 }
 
 bool consumeRecordToggle() {
