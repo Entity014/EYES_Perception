@@ -1,6 +1,6 @@
 #pragma once
 // Served at GET / . Single file, no external assets.
-inline const char* INDEX_HTML = R"HTML(<!doctype html>
+static const char INDEX_HTML[] = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XIAO Cam</title>
 <style>

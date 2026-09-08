@@ -5,7 +5,8 @@
 #include "ota.h"
 #include "led.h"
 
-static bool g_sdOk = false;
+static bool          g_sdOk    = false;
+static volatile bool g_capture = true;   // cleared when an OTA update starts
 
 static NetStatus statusProvider() {
   return NetStatus{
@@ -18,13 +19,45 @@ static NetStatus statusProvider() {
   };
 }
 
-static void onOtaStart() {
-  if (rec::isRecording()) rec::stop();
+static void onOtaStart() { g_capture = false; }   // capture task finalizes + parks
+
+// Owns the camera + recorder + LED. Runs on core 0 so a blocked HTTP handler
+// on the loop task can never stall capture or recording.
+static void captureTask(void*) {
+  for (;;) {
+    if (!g_capture) {
+      if (rec::isRecording()) rec::stop();
+      led::set(LedPattern::Ota);
+      led::tick();
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+
+    camera_fb_t* fb = cam::grab();
+    if (fb) {
+      rec::onFrame(fb->buf, fb->len);
+      net::submitFrame(fb->buf, fb->len);
+      cam::release(fb);
+    }
+    rec::tick();
+
+    if (net::consumeRecordToggle()) {
+      if (!g_sdOk)                   led::set(LedPattern::DoubleBlink);
+      else if (rec::isRecording()) { rec::stop();  led::set(LedPattern::Off); }
+      else if (rec::start())         led::set(LedPattern::Recording);
+      else                          led::set(LedPattern::DoubleBlink);
+    }
+    if (rec::hadError()) { g_sdOk = false; led::set(LedPattern::FastError); }
+
+    led::tick();
+    vTaskDelay(pdMS_TO_TICKS(5));   // yield — also keeps the chip cooler
+  }
 }
 
 void setup() {
   Serial.begin(115200);
   delay(200);
+  setCpuFrequencyMhz(160);          // enough for VGA MJPEG, noticeably cooler
   led::begin();
 
   if (!cam::begin()) {
@@ -39,47 +72,13 @@ void setup() {
   net::setStatusProvider(statusProvider);
   net::begin();
   ota::begin(onOtaStart);
-
   led::set(LedPattern::Off);
+
+  xTaskCreatePinnedToCore(captureTask, "capture", 8192, nullptr, 2, nullptr, 0);
 }
 
 void loop() {
   ota::handle();
-  if (ota::inProgress()) {
-    if (rec::isRecording()) rec::stop();
-    led::set(LedPattern::Ota);
-    led::tick();
-    net::handle();
-    return;
-  }
-
-  camera_fb_t* fb = cam::grab();
-  if (fb) {
-    rec::onFrame(fb->buf, fb->len);
-    net::submitFrame(fb->buf, fb->len);
-    cam::release(fb);
-  }
-
   net::handle();
-  rec::tick();
-
-  if (net::consumeRecordToggle()) {
-    if (!g_sdOk) {
-      led::set(LedPattern::DoubleBlink);
-    } else if (rec::isRecording()) {
-      rec::stop();
-      led::set(LedPattern::Off);
-    } else if (rec::start()) {
-      led::set(LedPattern::Recording);
-    } else {
-      led::set(LedPattern::DoubleBlink);
-    }
-  }
-
-  if (rec::hadError()) {
-    g_sdOk = false;
-    led::set(LedPattern::FastError);
-  }
-
-  led::tick();
+  delay(2);
 }

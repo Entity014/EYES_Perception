@@ -11,14 +11,16 @@ namespace {
   StatusFn   g_status = nullptr;
   volatile bool g_toggle = false;
 
-  // latest-frame slot.
-  // v1 is single-task: net::handle() (which runs handleStream) and
-  // net::submitFrame() are both driven from loop(), so no lock is needed.
-  // When the stream writer moves to core 0, guard g_slot* with a mutex
-  // (never a portMUX spinlock — this path reallocs).
-  uint8_t*  g_slot = nullptr;
-  size_t    g_slotCap = 0;
-  size_t    g_slotLen = 0;
+  // Latest-frame slot. submitFrame() runs on the capture task (core 0),
+  // handleStream() runs on the loop/web task (core 1) — genuinely concurrent,
+  // so a FreeRTOS mutex guards the buffer (never a portMUX spinlock: this
+  // holds across a multi-KB memcpy, which must not disable interrupts).
+  // Fixed PSRAM buffers, no realloc, so the pointer can't move under a reader.
+  constexpr size_t   FRAME_BUF_CAP = 90000;   // > worst-case VGA JPEG
+  uint8_t*           g_slot   = nullptr;       // written by submitFrame
+  uint8_t*           g_txbuf  = nullptr;       // handleStream's private copy
+  volatile size_t    g_slotLen = 0;
+  SemaphoreHandle_t  g_lock   = nullptr;
 
   NetStatus currentStatus() {
     if (g_status) return g_status();
@@ -53,22 +55,27 @@ namespace {
                  "Cache-Control: no-cache\r\n\r\n");
     uint32_t lastSent = 0;
     while (client.connected()) {
-      g_server.handleClient();          // keep other endpoints alive
+      g_server.handleClient();          // keep /status, /record alive during the stream
       uint32_t now = millis();
-      if (now - lastSent < 40) { delay(1); continue; }   // cap ~25 fps
+      if (now - lastSent < 40) { vTaskDelay(pdMS_TO_TICKS(2)); continue; }   // cap ~25 fps
       lastSent = now;
 
+      // copy the newest frame out under the lock, then send it unlocked
       size_t len = 0;
-      const uint8_t* frame = nullptr;
-      if (g_slotLen) { frame = g_slot; len = g_slotLen; }
-      if (!len) { delay(5); continue; }
+      if (g_lock && xSemaphoreTake(g_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
+        len = g_slotLen;
+        if (len && len <= FRAME_BUF_CAP) memcpy(g_txbuf, g_slot, len);
+        else len = 0;
+        xSemaphoreGive(g_lock);
+      }
+      if (!len) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
 
       char hdr[80];
       int n = snprintf(hdr, sizeof(hdr),
         "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
         (unsigned)len);
       if (client.write((const uint8_t*)hdr, n) != (size_t)n) break;
-      if (client.write(frame, len) != len) break;
+      if (client.write(g_txbuf, len) != len) break;
       if (client.write((const uint8_t*)"\r\n", 2) != 2) break;
     }
   }
@@ -108,6 +115,14 @@ void begin() {
     Serial.printf("AP %s  http://192.168.4.1/  (http://%s.local/)\n", ssid, OTA_HOSTNAME);
   }
 
+  WiFi.setTxPower(WIFI_POWER_11dBm);   // plenty for the room, runs cooler
+
+  g_lock  = xSemaphoreCreateMutex();
+  g_slot  = (uint8_t*)heap_caps_malloc(FRAME_BUF_CAP, MALLOC_CAP_SPIRAM);
+  g_txbuf = (uint8_t*)heap_caps_malloc(FRAME_BUF_CAP, MALLOC_CAP_SPIRAM);
+  if (!g_slot)  g_slot  = (uint8_t*)malloc(FRAME_BUF_CAP);
+  if (!g_txbuf) g_txbuf = (uint8_t*)malloc(FRAME_BUF_CAP);
+
   MDNS.begin(OTA_HOSTNAME);
   MDNS.addService("http", "tcp", 80);
 
@@ -121,15 +136,12 @@ void begin() {
 void handle() { g_server.handleClient(); }
 
 void submitFrame(const uint8_t* buf, size_t len) {
-  if (!len) return;
-  if (len > g_slotCap) {
-    uint8_t* p = (uint8_t*)realloc(g_slot, len);
-    if (!p) return;               // keep the previous frame on OOM
-    g_slot = p;
-    g_slotCap = len;
+  if (!len || !g_slot || len > FRAME_BUF_CAP) return;   // drop oversize frames
+  if (g_lock && xSemaphoreTake(g_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+    memcpy(g_slot, buf, len);
+    g_slotLen = len;
+    xSemaphoreGive(g_lock);
   }
-  memcpy(g_slot, buf, len);
-  g_slotLen = len;
 }
 
 bool consumeRecordToggle() {
