@@ -1,4 +1,4 @@
-# XIAO ESP32-S3 Sense — WiFi MJPEG Stream + Button-Triggered SD Recording
+# XIAO ESP32-S3 Sense — WiFi MJPEG Stream + Web-Triggered SD Recording
 
 **Date:** 2026-09-08
 **Status:** Approved design, pre-implementation
@@ -11,7 +11,7 @@ Firmware that, from a single camera pipeline, simultaneously:
 1. Serves a live MJPEG video stream over WiFi with the device acting as its own
    access point (AP).
 2. Records video to the microSD card as MJPEG-in-AVI files, started and stopped
-   by the onboard button.
+   from a button on the web page (no physical button — GPIO0/BOOT is untouched).
 3. Accepts new firmware over WiFi (OTA) — no USB cable needed after the first
    flash.
 
@@ -27,7 +27,7 @@ later, this phase already isolates the WiFi bring-up: only `streamer` and `ota`
 touch `WiFi`, `main` passes credentials in (never hard-codes them in the
 libraries), and the credential set lives in `config.h`. Adding STA then means a
 new `net::begin` path plus a couple of `config.h` fields — no change to
-`camera`, `avi_writer`, `recorder`, `button`, or the capture loop.
+`camera`, `avi_writer`, `recorder`, `led`, or the capture loop.
 
 ## 2. Hardware / Platform Configuration
 
@@ -39,7 +39,7 @@ new `net::begin` path plus a couple of `config.h` fields — no change to
 | Partition table | `min_spiffs.csv` — dual ~1.9 MB OTA app slots (OTA requires two slots) |
 | Camera model | `CAMERA_MODEL_XIAO_ESP32S3` (pins from `esp32-camera` `camera_pins.h`) |
 | SD interface | `SD_MMC` in 1-bit mode (CLK 7, CMD 9, D0 8) |
-| Button | onboard BOOT button, GPIO0, active-low, `INPUT_PULLUP` |
+| Record trigger | **web UI only** — no physical button; GPIO0/BOOT is left alone |
 | Indicator LED | onboard user LED, GPIO21, active-low |
 
 Notes:
@@ -100,7 +100,7 @@ left to the LDF):
 | `avi_writer` | `FS` (Arduino core), `config` |
 | `recorder` | `avi_writer`, `SD_MMC`, `config` |
 | `streamer` | `WiFi`, `WebServer`, `config` |
-| `button` | `config` |
+| `led` | `config` |
 | `ota` | `ArduinoOTA`, `Update`, `WebServer`, `config` |
 
 ### 3.1 `camera` — camera lifecycle and frame access
@@ -189,38 +189,39 @@ namespace net {
   - `GET /` → single self-contained HTML page: the live `<img src="/stream">`, a
     **Record / Stop** button, and a status line (recording state, current file,
     fps, client count, SD free MB). ~30 lines of inline JS polls `GET /status`
-    once a second to keep the button label and status text in sync — so it also
-    reflects recordings started from the physical button.
+    once a second to keep the button label and status text in sync across
+    multiple connected clients.
   - `GET /stream` → `multipart/x-mixed-replace; boundary=frame`; loop writes the
     latest frame as `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n`
     + bytes, throttled to the available frame rate.
   - `GET /status` → JSON `{recording, file, frames, fps, clients, sdFreeMB}`.
   - `POST /record` → toggles recording. The handler does **not** call `rec::*`
     directly; it sets an internal "toggle requested" flag and returns the
-    latest `/status` JSON. `main` calls `net::consumeRecordToggle()` in the same
-    place it checks the physical button, so both inputs go through one code path
-    (`WebServer` is pumped synchronously from `loop()`, so no locking needed for
-    this flag).
+    latest `/status` JSON. `main` consumes the flag via
+    `net::consumeRecordToggle()` once per loop (`WebServer` is pumped
+    synchronously from `loop()`, so no locking needed for this flag). This is
+    the only record trigger in this phase.
 - `submitFrame` copies bytes into a single mutex-protected buffer (the "latest
   frame slot"), sized to a max expected JPEG (e.g. 64 KB, realloc if exceeded).
   The stream handler reads from this slot — it never touches `camera_fb_t`
   directly, so a slow client cannot stall the capture loop.
 
-### 3.5 `button` — debounced input + LED output
+### 3.5 `led` — status indicator output
 
 ```cpp
-namespace btn {
+namespace led {
   void begin();
-  bool consumeShortPress();   // true once per completed short press
-  void setLed(bool on);
-  void blink(uint8_t pattern);// FAST_ERROR, DOUBLE, etc. (non-blocking)
+  void set(bool on);           // steady on/off (on == recording)
+  void blink(uint8_t pattern); // OFF, RECORDING, DOUBLE, FAST_ERROR, OTA (non-blocking)
+  void tick();                 // advance the current pattern; call every loop
 }
 ```
 
-- 25 ms debounce, press classified on release; only short press used for v1
-  (long-press reserved).
-- LED patterns driven from `main` state, updated non-blocking in `blink`/`setLed`
-  via millis timing.
+- Drives only the onboard user LED (GPIO21, active-low). No input, no GPIO0.
+- Patterns are set from `main` state; `tick()` advances them with `millis`
+  timing so nothing blocks the capture loop.
+- An optional external record button on a free GPIO is a **future** addition
+  (config-gated); it is not in this phase and GPIO0/BOOT is never claimed.
 
 ### 3.6 `ota` — over-the-air firmware update
 
@@ -263,16 +264,16 @@ namespace ota {
 ```
 setup():
   Serial.begin
-  btn::begin();  btn::blink(BOOT)
-  if (!cam::begin())            -> btn::blink(FAST_ERROR); halt
+  led::begin()
+  if (!cam::begin())            -> led::blink(FAST_ERROR); halt
   bool sdOk = rec::begin(SD_MMC) after SD_MMC.begin("/sdcard", true /*1-bit*/)
   net::begin(SSID, PASS)
   ota::begin("xiao-cam", OTA_PASSWORD)   // registers /update on net's WebServer too
-  LED off
+  led::set(false)
 
 loop():
   ota::handle();
-  if (ota::inProgress()) { if (rec::isRecording()) rec::stop(); btn::blink(OTA); return; }
+  if (ota::inProgress()) { if (rec::isRecording()) rec::stop(); led::blink(OTA); led::tick(); return; }
   camera_fb_t* fb = cam::grab();
   if (fb) {
     rec::onFrame(fb->buf, fb->len);     // writes to AVI if recording
@@ -281,13 +282,14 @@ loop():
   }
   net::handle();
   rec::tick();
-  if (btn::consumeShortPress() || net::consumeRecordToggle()) {   // physical OR web button
-    if (!sdOk)            btn::blink(DOUBLE);        // no card
-    else if (rec::isRecording()) { rec::stop();  btn::setLed(false); }
-    else if (rec::start())         btn::setLed(true);
-    else                          btn::blink(DOUBLE); // start failed
+  if (net::consumeRecordToggle()) {                  // web Record/Stop button — only trigger
+    if (!sdOk)                     led::blink(DOUBLE);          // no card
+    else if (rec::isRecording())  { rec::stop();  led::set(false); }
+    else if (rec::start())          led::set(true);
+    else                           led::blink(DOUBLE);         // start failed
   }
-  if (rec::hadError()) { btn::blink(FAST_ERROR briefly); sdOk = false; }
+  if (rec::hadError()) { led::blink(FAST_ERROR); sdOk = false; }
+  led::tick();
 ```
 
 Single-core loop for v1 (simplest correct version). If measured fps with a
@@ -313,6 +315,8 @@ flowchart TD
     ADD --> SDCARD[("SD_MMC : /VID_NNNNN.avi")]
     SLOT -->|"read under mutex"| STREAM["WebServer GET /stream: multipart MJPEG"]
     STREAM --> CLIENT["browser at 192.168.4.1"]
+    CLIENT -.->|"POST /record"| TOGGLE["toggle flag -> net::consumeRecordToggle()"]
+    TOGGLE -.->|"main starts/stops"| REC
 ```
 
 Same JPEG bytes feed both sinks; neither sink owns the buffer; `cam::release`
@@ -323,7 +327,7 @@ happens every iteration regardless of sink success.
 | Condition | Behavior |
 |---|---|
 | Camera init fails | Fast LED blink, halt in `setup` (nothing works without it) |
-| SD not present / mount fails | Streaming runs normally; `rec::start` returns false; press → DOUBLE blink |
+| SD not present / mount fails | Streaming runs normally; `rec::start` returns false; web Record → DOUBLE blink, `/status` shows `sdFreeMB: null` |
 | SD write error during recording | Session aborted, file closed as-is, `hadError()` set, recording disabled until reboot |
 | Counter file missing/corrupt | Treated as 0; next file is `VID_00001.avi` |
 | Stream client disconnects mid-frame | `WebServer` write fails silently; handler returns; capture loop unaffected |
@@ -353,14 +357,13 @@ happens every iteration regardless of sink success.
 
 1. Power on → `XIAO-CAM-xxxx` AP appears; connect; `http://192.168.4.1` shows
    live video; `/status` JSON updates.
-1b. On the web page, click **Record** → LED on, status line shows the file and
-   "recording"; click **Stop** → LED off. Physical button and web button agree
-   (start with one, stop with the other).
-2. Press button → LED on; wait 30 s; press → LED off. Pull card, open
+2. On the web page, click **Record** → LED on, status line shows the file and
+   "recording"; wait 30 s; click **Stop** → LED off. Pull card, open
    `VID_00001.avi` in VLC: plays, ~30 s, correct orientation. `ffprobe` reports
    plausible fps/frame count.
 3. Record while a browser stream is open → both work; note the fps in `/status`.
-4. Remove card, press button → DOUBLE blink, stream still fine.
+   Open a second client → its button label reflects the recording state.
+4. Remove card, click **Record** → DOUBLE blink, stream still fine.
 5. Yank power mid-recording → next boot, previous file still opens in VLC.
 6. Connected to the AP, run `pio run -e xiao -t upload` (or open `/update` and
    upload `firmware.bin`) → device flashes, reboots, comes back on the new build;
@@ -373,9 +376,10 @@ happens every iteration regardless of sink success.
 - Automatic rollback verification beyond what `Update` provides
 - RTSP
 - Audio (the XIAO Sense PDM mic)
+- Any physical / GPIO button (web UI is the only control; optional external
+  button is a future, config-gated addition)
 - Authentication on the web server
 - Automatic card-full rotation / oldest-file deletion
-- Long-press actions
 - Timestamp overlay on frames
 
 ## 8. File Layout
@@ -393,7 +397,7 @@ firmware/
     avi_writer/  avi_writer.h  avi_writer.cpp  library.json
     recorder/    recorder.h    recorder.cpp    library.json
     streamer/    streamer.h    streamer.cpp    library.json   (+ index_html.h)
-    button/      button.h      button.cpp      library.json
+    led/         led.h         led.cpp         library.json
     ota/         ota.h         ota.cpp         library.json
   test/
     test_avi_writer/           ; native env, links lib/avi_writer only
