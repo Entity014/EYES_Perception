@@ -17,6 +17,10 @@ Firmware that, from a single camera pipeline, simultaneously:
 
 Capture target: VGA (640x480), ~20 fps nominal (degrades gracefully under load).
 
+**This phase: AP-only.** The ESP32 shares its own WiFi hotspot; clients connect
+directly to the device. It never joins an existing router. STA / client mode is a
+later phase (see §7).
+
 ## 2. Hardware / Platform Configuration
 
 | Item | Value |
