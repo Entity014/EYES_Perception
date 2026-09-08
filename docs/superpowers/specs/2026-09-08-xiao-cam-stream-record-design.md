@@ -254,30 +254,21 @@ that safe. Documented as a known optional optimization, not v1 scope.
 
 ```mermaid
 flowchart TD
-    CAM["OV2640 sensor"] -->|"cam::grab()"| FB["camera_fb_t<br/>JPEG in PSRAM (x2)"]
+    CAM["OV2640 sensor"] -->|"cam::grab()"| FB["camera_fb_t: JPEG in PSRAM, x2 buffers"]
 
-    FB -->|"rec::onFrame(buf,len)"| REC{"recording?"}
-    REC -->|yes| AVI["AviWriter.addFrame()"]
-    REC -->|no| DROP1["(ignored)"]
-    AVI --> SD[("SD_MMC<br/>/VID_NNNNN.avi")]
-
-    FB -->|"net::submitFrame(buf,len)<br/>memcpy under mutex"| SLOT["latest-frame slot<br/>(single buffer)"]
-    SLOT -->|"read under mutex"| STREAM["WebServer: GET /stream<br/>multipart/x-mixed-replace"]
-    STREAM --> CLIENT["browser @ 192.168.4.1"]
-
-    FB -->|"every iteration"| REL["cam::release(fb)"]
-
-    subgraph loop["capture loop (one iteration)"]
-        FB
-        REC
-        AVI
-        SLOT
-        REL
+    subgraph LOOP ["one capture-loop iteration"]
+        FB --> REC{"rec::isRecording?"}
+        REC -->|yes| ADD["AviWriter.addFrame(buf,len)"]
+        REC -->|no| SKIP["skip"]
+        FB --> SUB["net::submitFrame(buf,len): memcpy under mutex"]
+        SUB --> SLOT["latest-frame slot: single buffer"]
+        FB --> REL["cam::release(fb): always"]
     end
-```
 
-Same JPEG bytes feed both sinks; neither sink owns the buffer; `cam::release`
-happens every iteration regardless of sink success.
+    ADD --> SDCARD[("SD_MMC : /VID_NNNNN.avi")]
+    SLOT -->|"read under mutex"| STREAM["WebServer GET /stream: multipart MJPEG"]
+    STREAM --> CLIENT["browser at 192.168.4.1"]
+```
 
 Same JPEG bytes feed both sinks; neither sink owns the buffer; `cam::release`
 happens every iteration regardless of sink success.
