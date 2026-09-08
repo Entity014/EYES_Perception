@@ -18,8 +18,16 @@ Firmware that, from a single camera pipeline, simultaneously:
 Capture target: VGA (640x480), ~20 fps nominal (degrades gracefully under load).
 
 **This phase: AP-only.** The ESP32 shares its own WiFi hotspot; clients connect
-directly to the device. It never joins an existing router. STA / client mode is a
-later phase (see §7).
+directly to the device. It never joins an existing router.
+
+**Next phase (planned): STA / joins WiFi.** The hardware will connect to an
+existing network so the stream, web UI, and OTA are reachable over the LAN
+(likely with AP fallback when no known network is in range). To keep that cheap
+later, this phase already isolates the WiFi bring-up: only `streamer` and `ota`
+touch `WiFi`, `main` passes credentials in (never hard-codes them in the
+libraries), and the credential set lives in `config.h`. Adding STA then means a
+new `net::begin` path plus a couple of `config.h` fields — no change to
+`camera`, `avi_writer`, `recorder`, `button`, or the capture loop.
 
 ## 2. Hardware / Platform Configuration
 
@@ -360,7 +368,7 @@ happens every iteration regardless of sink success.
 
 ## 7. Out of Scope (v1)
 
-- STA mode / joining an existing router
+- STA mode / joining an existing router (planned next phase — see §1)
 - Signed / encrypted OTA images (plain `ArduinoOTA` password auth only)
 - Automatic rollback verification beyond what `Update` provides
 - RTSP
