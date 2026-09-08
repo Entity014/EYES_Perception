@@ -22,7 +22,7 @@
 - Status LED: onboard user LED GPIO21, **active-low** (write `LOW` to light).
 - Every `.cpp` under `firmware/lib/` that calls an Arduino/ESP-IDF API wraps its translation-unit body in `#ifdef ARDUINO ... #endif` so the `native` test env can compile the tree.
 - All library code is `-std=gnu++17` clean and includes only `<cstdint>`/`<cstddef>`/`<cstring>`/STL unless inside an `#ifdef ARDUINO` block.
-- AVI byte layout is fixed by this plan: 220-byte header, `00dc` frame chunks with pad-to-even, trailing `idx1`. Patch offsets are listed in Task 2 and MUST NOT be changed.
+- AVI byte layout is fixed by this plan: 224-byte header, `00dc` frame chunks with pad-to-even, trailing `idx1`. Patch offsets are listed in Task 2 and MUST NOT be changed.
 - `firmware/config/config.h` is git-ignored; `firmware/config/config.example.h` is committed.
 - Commit after every task with the message shown in that task's final step.
 
@@ -218,29 +218,29 @@ git commit -m "chore: scaffold PlatformIO build, config header, native test env"
     - `uint32_t frameCount() const;`
     - `uint32_t bytesWritten() const;   // total bytes handed to the sink`
     - `}`
-  - Fixed header layout: **220-byte header**. Patch offsets (absolute, little-endian u32 unless noted):
+  - Fixed header layout: **224-byte header** (`RIFF`/`AVI ` / `LIST`+`hdrl` / `avih` / `LIST`+`strl` / `strh` / `strf` / `LIST`+`movi`). Patch offsets (absolute, little-endian u32 unless noted):
 
     | Offset | Field | Patched at |
     |---|---|---|
     | 4 | RIFF size = fileSize − 8 | `end` |
-    | 28 | avih dwMicroSecPerFrame = round(1e6 / fps) | `end` |
-    | 32 | avih dwMaxBytesPerSec = round(maxFrameBytes * fps) | `end` |
-    | 44 | avih dwTotalFrames | `end` |
-    | 56 | avih dwSuggestedBufferSize = maxFrameBytes | `end` |
-    | 60 | avih dwWidth | `begin` |
-    | 64 | avih dwHeight | `begin` |
-    | 128 | strh dwRate = round(fps) (dwScale at 124 = 1) | `end` |
-    | 136 | strh dwLength = frameCount | `end` |
-    | 140 | strh dwSuggestedBufferSize = maxFrameBytes | `end` |
-    | 156 | strh rcFrame.right (u16) = width | `begin` |
-    | 158 | strh rcFrame.bottom (u16) = height | `begin` |
-    | 172 | strf biWidth | `begin` |
-    | 176 | strf biHeight | `begin` |
-    | 188 | strf biSizeImage = width*height*3 | `begin` |
-    | 212 | movi LIST size = 4 + moviPayload | `end` |
+    | 32 | avih dwMicroSecPerFrame = round(1e6 / fps) | `end` |
+    | 36 | avih dwMaxBytesPerSec = round(maxFrameBytes * fps) | `end` |
+    | 48 | avih dwTotalFrames | `end` |
+    | 60 | avih dwSuggestedBufferSize = maxFrameBytes | `end` |
+    | 64 | avih dwWidth | `begin` |
+    | 68 | avih dwHeight | `begin` |
+    | 132 | strh dwRate = round(fps) (dwScale at 128 = 1) | `end` |
+    | 140 | strh dwLength = frameCount | `end` |
+    | 144 | strh dwSuggestedBufferSize = maxFrameBytes | `end` |
+    | 160 | strh rcFrame.right (u16) = width | `begin` |
+    | 162 | strh rcFrame.bottom (u16) = height | `begin` |
+    | 176 | strf biWidth | `begin` |
+    | 180 | strf biHeight | `begin` |
+    | 192 | strf biSizeImage = width*height*3 | `begin` |
+    | 216 | movi LIST size = 4 + moviPayload | `end` |
 
     Frame chunk: `'00dc'` + u32 len + payload + 1 pad byte iff len is odd.
-    `idx1`: `'idx1'` + u32(16*count) + per frame { `'00dc'`, u32 flags=0x10, u32 offset=(abs offset of that `00dc`) − 216, u32 len }.
+    `idx1`: `'idx1'` + u32(16*count) + per frame { `'00dc'`, u32 flags=0x10, u32 offset=(abs offset of that `00dc`) − 220, u32 len }.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -284,16 +284,17 @@ void test_header_structure_and_fourccs(void) {
   TEST_ASSERT_TRUE(fourcc(s.buf, 0, "RIFF"));
   TEST_ASSERT_TRUE(fourcc(s.buf, 8, "AVI "));
   TEST_ASSERT_TRUE(fourcc(s.buf, 12, "LIST"));
-  TEST_ASSERT_TRUE(fourcc(s.buf, 20, "avih"));
-  TEST_ASSERT_TRUE(fourcc(s.buf, 96, "strh"));
-  TEST_ASSERT_TRUE(fourcc(s.buf, 160, "strf"));
-  TEST_ASSERT_TRUE(fourcc(s.buf, 216, "movi"));
-  TEST_ASSERT_EQUAL_UINT32(640, u32(s.buf, 60));   // avih width
-  TEST_ASSERT_EQUAL_UINT32(480, u32(s.buf, 64));   // avih height
-  TEST_ASSERT_EQUAL_UINT16(640, u16(s.buf, 156));  // rcFrame right
-  TEST_ASSERT_EQUAL_UINT16(480, u16(s.buf, 158));  // rcFrame bottom
-  TEST_ASSERT_EQUAL_UINT32(640*480*3, u32(s.buf, 188)); // biSizeImage
-  TEST_ASSERT_EQUAL_UINT32(220, s.buf.size());     // header only, no frames yet
+  TEST_ASSERT_TRUE(fourcc(s.buf, 20, "hdrl"));
+  TEST_ASSERT_TRUE(fourcc(s.buf, 24, "avih"));
+  TEST_ASSERT_TRUE(fourcc(s.buf, 100, "strh"));
+  TEST_ASSERT_TRUE(fourcc(s.buf, 164, "strf"));
+  TEST_ASSERT_TRUE(fourcc(s.buf, 220, "movi"));
+  TEST_ASSERT_EQUAL_UINT32(640, u32(s.buf, 64));   // avih width
+  TEST_ASSERT_EQUAL_UINT32(480, u32(s.buf, 68));   // avih height
+  TEST_ASSERT_EQUAL_UINT16(640, u16(s.buf, 160));  // rcFrame right
+  TEST_ASSERT_EQUAL_UINT16(480, u16(s.buf, 162));  // rcFrame bottom
+  TEST_ASSERT_EQUAL_UINT32(640*480*3, u32(s.buf, 192)); // biSizeImage
+  TEST_ASSERT_EQUAL_UINT32(224, s.buf.size());     // header only, no frames yet
 }
 
 void test_frames_chunks_and_padding(void) {
@@ -305,12 +306,12 @@ void test_frames_chunks_and_padding(void) {
   TEST_ASSERT_TRUE(w.addFrame(f3, 3));
   TEST_ASSERT_TRUE(w.addFrame(f4, 4));
   TEST_ASSERT_EQUAL_UINT32(2, w.frameCount());
-  // frame 1 chunk at 220
-  TEST_ASSERT_TRUE(fourcc(s.buf, 220, "00dc"));
-  TEST_ASSERT_EQUAL_UINT32(3, u32(s.buf, 224));
-  // 220 + 8 + 3 + 1 pad = 232 -> frame 2
-  TEST_ASSERT_TRUE(fourcc(s.buf, 232, "00dc"));
-  TEST_ASSERT_EQUAL_UINT32(4, u32(s.buf, 236));
+  // frame 1 chunk at 224
+  TEST_ASSERT_TRUE(fourcc(s.buf, 224, "00dc"));
+  TEST_ASSERT_EQUAL_UINT32(3, u32(s.buf, 228));
+  // 224 + 8 + 3 + 1 pad = 236 -> frame 2
+  TEST_ASSERT_TRUE(fourcc(s.buf, 236, "00dc"));
+  TEST_ASSERT_EQUAL_UINT32(4, u32(s.buf, 240));
 }
 
 void test_end_patches_and_index(void) {
@@ -323,23 +324,25 @@ void test_end_patches_and_index(void) {
   TEST_ASSERT_TRUE(w.end(20.0f));
 
   TEST_ASSERT_EQUAL_UINT32(s.buf.size() - 8, u32(s.buf, 4));  // RIFF size
-  TEST_ASSERT_EQUAL_UINT32(50000, u32(s.buf, 28));            // usec/frame @ 20fps
-  TEST_ASSERT_EQUAL_UINT32(2, u32(s.buf, 44));                // total frames (avih)
-  TEST_ASSERT_EQUAL_UINT32(20, u32(s.buf, 128));              // strh rate
-  TEST_ASSERT_EQUAL_UINT32(2, u32(s.buf, 136));               // strh length
-  TEST_ASSERT_EQUAL_UINT32(4, u32(s.buf, 56));                // avih buf size = max frame
+  TEST_ASSERT_EQUAL_UINT32(50000, u32(s.buf, 32));            // usec/frame @ 20fps
+  TEST_ASSERT_EQUAL_UINT32(2, u32(s.buf, 48));                // total frames (avih)
+  TEST_ASSERT_EQUAL_UINT32(20, u32(s.buf, 132));              // strh rate
+  TEST_ASSERT_EQUAL_UINT32(2, u32(s.buf, 140));               // strh length
+  TEST_ASSERT_EQUAL_UINT32(4, u32(s.buf, 60));                // avih buf size = max frame
 
-  // movi payload = 2 * (8 + 4) = 24 ; LIST size at 212 = 4 + 24 = 28
-  TEST_ASSERT_EQUAL_UINT32(28, u32(s.buf, 212));
+  // movi payload = 2 * (8 + 4) = 24 ; LIST size at 216 = 4 + 24 = 28
+  TEST_ASSERT_EQUAL_UINT32(28, u32(s.buf, 216));
 
-  // idx1 immediately after movi payload: 216 + 4 + 24 = 244
-  TEST_ASSERT_TRUE(fourcc(s.buf, 244, "idx1"));
-  TEST_ASSERT_EQUAL_UINT32(32, u32(s.buf, 248));              // 2 entries * 16
-  TEST_ASSERT_TRUE(fourcc(s.buf, 252, "00dc"));
-  TEST_ASSERT_EQUAL_UINT32(0x10, u32(s.buf, 256));            // keyframe flag
-  TEST_ASSERT_EQUAL_UINT32(220 - 216, u32(s.buf, 260));       // offset of first 00dc rel movi
-  TEST_ASSERT_EQUAL_UINT32(4, u32(s.buf, 264));               // len
-  TEST_ASSERT_EQUAL_UINT32(232 - 216, u32(s.buf, 268));       // second entry offset
+  // idx1 immediately after movi payload: header 224 + 24 = 248
+  TEST_ASSERT_TRUE(fourcc(s.buf, 248, "idx1"));
+  TEST_ASSERT_EQUAL_UINT32(32, u32(s.buf, 252));              // 2 entries * 16
+  // entry 0 @ 256: ckid, flags@260, offset@264, len@268
+  TEST_ASSERT_TRUE(fourcc(s.buf, 256, "00dc"));
+  TEST_ASSERT_EQUAL_UINT32(0x10, u32(s.buf, 260));            // keyframe flag
+  TEST_ASSERT_EQUAL_UINT32(224 - 220, u32(s.buf, 264));       // offset of first 00dc rel movi
+  TEST_ASSERT_EQUAL_UINT32(4, u32(s.buf, 268));               // len
+  // entry 1 @ 272: ckid, flags@276, offset@280, len@284
+  TEST_ASSERT_EQUAL_UINT32(236 - 220, u32(s.buf, 280));       // offset of second 00dc rel movi
 }
 
 void setUp(void) {}
@@ -416,63 +419,63 @@ private:
 #include <cmath>
 
 namespace {
-constexpr uint32_t HDR_SIZE   = 220;
-constexpr uint32_t MOVI_FOURCC_POS = 216;
+constexpr uint32_t HDR_SIZE   = 224;
+constexpr uint32_t MOVI_FOURCC_POS = 220;
 
 inline void wr32(uint8_t* p, uint32_t v) { p[0]=v; p[1]=v>>8; p[2]=v>>16; p[3]=v>>24; }
 inline void wr16(uint8_t* p, uint16_t v) { p[0]=v; p[1]=v>>8; }
 inline void tag(uint8_t* p, const char* s) { std::memcpy(p, s, 4); }
 
-// Build the fixed 220-byte header. Width/height baked in; the rest patched in end().
+// Build the fixed 224-byte header. Width/height baked in; the rest patched in end().
 void buildHeader(uint8_t* h, uint16_t w, uint16_t ht) {
   std::memset(h, 0, HDR_SIZE);
   tag(h + 0,  "RIFF"); wr32(h + 4,  0);            // RIFF size (patched)
   tag(h + 8,  "AVI ");
-  tag(h + 12, "LIST"); wr32(h + 16, 192);          // hdrl size = fixed
-  tag(h + 16 - 4 + 4, "LIST");                     // (no-op; keeps layout explicit)
-  tag(h + 20, "avih"); wr32(h + 24, 56);
-  // --- MainAVIHeader @ 28 ---
-  wr32(h + 28, 0);                                 // dwMicroSecPerFrame (patched)
-  wr32(h + 32, 0);                                 // dwMaxBytesPerSec  (patched)
-  wr32(h + 36, 0);                                 // dwPaddingGranularity
-  wr32(h + 40, 0x10);                              // dwFlags = AVIF_HASINDEX
-  wr32(h + 44, 0);                                 // dwTotalFrames (patched)
-  wr32(h + 48, 0);                                 // dwInitialFrames
-  wr32(h + 52, 1);                                 // dwStreams
-  wr32(h + 56, 0);                                 // dwSuggestedBufferSize (patched)
-  wr32(h + 60, w);                                 // dwWidth
-  wr32(h + 64, ht);                                // dwHeight
-  // 68..83 reserved (zero)
-  tag(h + 84, "LIST"); wr32(h + 88, 116);          // strl size = fixed
-  tag(h + 92, "strl");
-  tag(h + 96, "strh"); wr32(h + 100, 56);
-  // --- AVIStreamHeader @ 104 ---
-  tag(h + 104, "vids");
-  tag(h + 108, "MJPG");
-  wr32(h + 112, 0);                                // dwFlags
-  wr16(h + 116, 0); wr16(h + 118, 0);              // wPriority, wLanguage
-  wr32(h + 120, 0);                                // dwInitialFrames
-  wr32(h + 124, 1);                                // dwScale
-  wr32(h + 128, 0);                                // dwRate (patched)
-  wr32(h + 132, 0);                                // dwStart
-  wr32(h + 136, 0);                                // dwLength (patched)
-  wr32(h + 140, 0);                                // dwSuggestedBufferSize (patched)
-  wr32(h + 144, 0xFFFFFFFF);                       // dwQuality
-  wr32(h + 148, 0);                                // dwSampleSize
-  wr16(h + 152, 0); wr16(h + 154, 0);              // rcFrame left, top
-  wr16(h + 156, w); wr16(h + 158, ht);             // rcFrame right, bottom
-  tag(h + 160, "strf"); wr32(h + 164, 40);
-  // --- BITMAPINFOHEADER @ 168 ---
-  wr32(h + 168, 40);                               // biSize
-  wr32(h + 172, w);                                // biWidth
-  wr32(h + 176, ht);                               // biHeight
-  wr16(h + 180, 1); wr16(h + 182, 24);             // biPlanes, biBitCount
-  tag(h + 184, "MJPG");                            // biCompression
-  wr32(h + 188, (uint32_t)w * ht * 3);             // biSizeImage
-  wr32(h + 192, 0); wr32(h + 196, 0);              // x/y pels per meter
-  wr32(h + 200, 0); wr32(h + 204, 0);              // biClrUsed, biClrImportant
-  tag(h + 208, "LIST"); wr32(h + 212, 0);          // movi LIST size (patched)
-  tag(h + 216, "movi");
+  tag(h + 12, "LIST"); wr32(h + 16, 192);          // hdrl LIST size = fixed
+  tag(h + 20, "hdrl");
+  tag(h + 24, "avih"); wr32(h + 28, 56);
+  // --- MainAVIHeader @ 32 ---
+  wr32(h + 32, 0);                                 // dwMicroSecPerFrame (patched)
+  wr32(h + 36, 0);                                 // dwMaxBytesPerSec  (patched)
+  wr32(h + 40, 0);                                 // dwPaddingGranularity
+  wr32(h + 44, 0x10);                              // dwFlags = AVIF_HASINDEX
+  wr32(h + 48, 0);                                 // dwTotalFrames (patched)
+  wr32(h + 52, 0);                                 // dwInitialFrames
+  wr32(h + 56, 1);                                 // dwStreams
+  wr32(h + 60, 0);                                 // dwSuggestedBufferSize (patched)
+  wr32(h + 64, w);                                 // dwWidth
+  wr32(h + 68, ht);                                // dwHeight
+  // 72..87 reserved (zero)
+  tag(h + 88, "LIST"); wr32(h + 92, 116);          // strl LIST size = fixed
+  tag(h + 96, "strl");
+  tag(h + 100, "strh"); wr32(h + 104, 56);
+  // --- AVIStreamHeader @ 108 ---
+  tag(h + 108, "vids");
+  tag(h + 112, "MJPG");
+  wr32(h + 116, 0);                                // dwFlags
+  wr16(h + 120, 0); wr16(h + 122, 0);              // wPriority, wLanguage
+  wr32(h + 124, 0);                                // dwInitialFrames
+  wr32(h + 128, 1);                                // dwScale
+  wr32(h + 132, 0);                                // dwRate (patched)
+  wr32(h + 136, 0);                                // dwStart
+  wr32(h + 140, 0);                                // dwLength (patched)
+  wr32(h + 144, 0);                                // dwSuggestedBufferSize (patched)
+  wr32(h + 148, 0xFFFFFFFF);                       // dwQuality
+  wr32(h + 152, 0);                                // dwSampleSize
+  wr16(h + 156, 0); wr16(h + 158, 0);              // rcFrame left, top
+  wr16(h + 160, w); wr16(h + 162, ht);             // rcFrame right, bottom
+  tag(h + 164, "strf"); wr32(h + 168, 40);
+  // --- BITMAPINFOHEADER @ 172 ---
+  wr32(h + 172, 40);                               // biSize
+  wr32(h + 176, w);                                // biWidth
+  wr32(h + 180, ht);                               // biHeight
+  wr16(h + 184, 1); wr16(h + 186, 24);             // biPlanes, biBitCount
+  tag(h + 188, "MJPG");                            // biCompression
+  wr32(h + 192, (uint32_t)w * ht * 3);             // biSizeImage
+  wr32(h + 196, 0); wr32(h + 200, 0);              // x/y pels per meter
+  wr32(h + 204, 0); wr32(h + 208, 0);              // biClrUsed, biClrImportant
+  tag(h + 212, "LIST"); wr32(h + 216, 0);          // movi LIST size (patched)
+  tag(h + 220, "movi");
 }
 } // namespace
 
@@ -547,14 +550,14 @@ bool AviWriter::end(float measuredFps) {
 
   bool ok = true;
   ok &= patch32(4,   fileSize - 8);
-  ok &= patch32(28,  usecPerFrame);
-  ok &= patch32(32,  maxBps);
-  ok &= patch32(44,  frameCount_);
-  ok &= patch32(56,  maxFrame_);
-  ok &= patch32(128, rate);
-  ok &= patch32(136, frameCount_);
-  ok &= patch32(140, maxFrame_);
-  ok &= patch32(212, moviListSize);
+  ok &= patch32(32,  usecPerFrame);
+  ok &= patch32(36,  maxBps);
+  ok &= patch32(48,  frameCount_);
+  ok &= patch32(60,  maxFrame_);
+  ok &= patch32(132, rate);
+  ok &= patch32(140, frameCount_);
+  ok &= patch32(144, maxFrame_);
+  ok &= patch32(216, moviListSize);
   sink_->flush();
   active_ = false;
   return ok;
