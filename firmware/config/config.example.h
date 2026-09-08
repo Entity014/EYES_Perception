@@ -20,3 +20,7 @@
 #define LED_PIN               21
 #define LED_ACTIVE_LOW        true
 #define SD_MOUNT_POINT        "/sdcard"
+// XIAO ESP32-S3 Sense microSD — 1-bit SDMMC (do not change for this board)
+#define SD_MMC_CLK_PIN        7
+#define SD_MMC_CMD_PIN        9
+#define SD_MMC_D0_PIN         8

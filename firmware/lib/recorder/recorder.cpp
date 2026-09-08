@@ -43,8 +43,23 @@ namespace {
 namespace rec {
 
 bool begin() {
-  g_sdOk = SD_MMC.begin(SD_MOUNT_POINT, true /* 1-bit */);
-  if (!g_sdOk) return false;
+  // ESP32-S3 routes SDMMC through the GPIO matrix — pins MUST be set first.
+  if (!SD_MMC.setPins(SD_MMC_CLK_PIN, SD_MMC_CMD_PIN, SD_MMC_D0_PIN)) {
+    Serial.println("SD: setPins failed");
+    return false;
+  }
+  // 1-bit mode; retry once slower in case of a marginal card/contact.
+  g_sdOk = SD_MMC.begin(SD_MOUNT_POINT, true, false, SDMMC_FREQ_DEFAULT);
+  if (!g_sdOk) {
+    g_sdOk = SD_MMC.begin(SD_MOUNT_POINT, true, false, SDMMC_FREQ_PROBING);
+  }
+  if (!g_sdOk) {
+    Serial.println("SD: begin failed (card seated? FAT32?)");
+    return false;
+  }
+  uint8_t type = SD_MMC.cardType();
+  Serial.printf("SD ok: type=%d size=%lluMB\n",
+                type, SD_MMC.cardSize() / (1024ULL * 1024ULL));
   g_counter = loadCounter();
   return true;
 }
