@@ -252,13 +252,32 @@ that safe. Documented as a known optional optimization, not v1 scope.
 
 ## 4. Data Flow Summary
 
+```mermaid
+flowchart TD
+    CAM["OV2640 sensor"] -->|"cam::grab()"| FB["camera_fb_t<br/>JPEG in PSRAM (x2)"]
+
+    FB -->|"rec::onFrame(buf,len)"| REC{"recording?"}
+    REC -->|yes| AVI["AviWriter.addFrame()"]
+    REC -->|no| DROP1["(ignored)"]
+    AVI --> SD[("SD_MMC<br/>/VID_NNNNN.avi")]
+
+    FB -->|"net::submitFrame(buf,len)<br/>memcpy under mutex"| SLOT["latest-frame slot<br/>(single buffer)"]
+    SLOT -->|"read under mutex"| STREAM["WebServer: GET /stream<br/>multipart/x-mixed-replace"]
+    STREAM --> CLIENT["browser @ 192.168.4.1"]
+
+    FB -->|"every iteration"| REL["cam::release(fb)"]
+
+    subgraph loop["capture loop (one iteration)"]
+        FB
+        REC
+        AVI
+        SLOT
+        REL
+    end
 ```
-OV2640 --grab--> camera_fb_t (PSRAM, x2)
-                      |-- rec::onFrame --> AviWriter --> SD_MMC:/VID_NNNNN.avi
-                      |-- net::submitFrame --(memcpy under mutex)--> latest-frame slot
-                                                                        |
-                              WebServer task: GET /stream <-- reads slot, writes multipart
-```
+
+Same JPEG bytes feed both sinks; neither sink owns the buffer; `cam::release`
+happens every iteration regardless of sink success.
 
 Same JPEG bytes feed both sinks; neither sink owns the buffer; `cam::release`
 happens every iteration regardless of sink success.
