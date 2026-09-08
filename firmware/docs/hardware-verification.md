@@ -2,8 +2,8 @@
 
 Board: Seeed XIAO ESP32-S3 Sense + microSD card inserted.
 
-## First flash (USB)
-1. `cd firmware && pio run -e xiao-usb -t upload -t monitor`
+## Flash (USB / UART — the normal path)
+1. `cd firmware && pio run -e xiao -t upload -t monitor`
 2. Serial shows `SD ready` (or `SD unavailable`) and
    `AP XIAO-CAM-xxxx  http://192.168.4.1/`.
 
@@ -36,8 +36,9 @@ Board: Seeed XIAO ESP32-S3 Sense + microSD card inserted.
     the previous `VID_xxxxx.avi` still opens in VLC (last ~5 s may be missing).
 
 ## OTA
+(OTA is optional — the UART path above is the default. To try it:)
 16. Export the OTA password: `export OTA_PASSWORD=<value from config.h>`
-17. On the AP: `cd firmware && pio run -e xiao -t upload` -> `100%`, device
+17. On the AP: `cd firmware && pio run -e xiao-ota -t upload` -> `100%`, device
     reboots, stream returns on the new build.
 18. Alternatively open `http://192.168.4.1/update`, upload
     `.pio/build/xiao/firmware.bin` -> `OK, rebooting`.
@@ -47,5 +48,5 @@ Board: Seeed XIAO ESP32-S3 Sense + microSD card inserted.
 ## Build-time gate (no hardware)
 - `cd firmware && pio test -e native` -> all suites pass
   (test_avi_writer, test_led_pattern, test_recorder_names).
-- `cd firmware && pio run -e xiao -e xiao-usb` -> both SUCCESS; `xiao`
-  flash use must stay well under the ~1.9 MB `min_spiffs` app slot.
+- `cd firmware && pio run -e xiao` -> SUCCESS; flash use must stay well
+  under the ~1.9 MB `min_spiffs` app slot (currently ~46%).
