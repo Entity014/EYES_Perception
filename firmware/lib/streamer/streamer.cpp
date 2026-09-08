@@ -2,6 +2,7 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <config.h>
 #include "index_html.h"
 
@@ -80,17 +81,41 @@ void begin() {
   WiFi.macAddress(mac);
   char ssid[40];
   snprintf(ssid, sizeof(ssid), "%s%02X%02X", AP_SSID_PREFIX, mac[4], mac[5]);
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1),
-                    IPAddress(255,255,255,0));
-  WiFi.softAP(ssid, AP_PASSWORD);
+  bool joined = false;
+  if (WIFI_SSID[0] != '\0') {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    Serial.printf("joining %s", WIFI_SSID);
+    uint32_t t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_JOIN_TIMEOUT_MS) {
+      delay(250);
+      Serial.print('.');
+    }
+    joined = (WiFi.status() == WL_CONNECTED);
+    if (joined) {
+      Serial.printf("\nSTA %s  http://%s/  (http://%s.local/)\n",
+                    WIFI_SSID, WiFi.localIP().toString().c_str(), OTA_HOSTNAME);
+    } else {
+      Serial.println("\njoin failed -> AP fallback");
+    }
+  }
+
+  if (!joined) {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1),
+                      IPAddress(255,255,255,0));
+    WiFi.softAP(ssid, AP_PASSWORD);
+    Serial.printf("AP %s  http://192.168.4.1/  (http://%s.local/)\n", ssid, OTA_HOSTNAME);
+  }
+
+  MDNS.begin(OTA_HOSTNAME);
+  MDNS.addService("http", "tcp", 80);
 
   g_server.on("/", HTTP_GET, handleRoot);
   g_server.on("/status", HTTP_GET, handleStatus);
   g_server.on("/record", HTTP_POST, handleRecord);
   g_server.on("/stream", HTTP_GET, handleStream);
   g_server.begin();
-  Serial.printf("AP %s  http://192.168.4.1/\n", ssid);
 }
 
 void handle() { g_server.handleClient(); }
