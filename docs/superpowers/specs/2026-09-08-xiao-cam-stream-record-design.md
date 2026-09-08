@@ -145,17 +145,28 @@ namespace net {
   void handle();                                        // pump server, call each loop
   void submitFrame(const uint8_t* buf, size_t len);     // copy into shared latest slot
   uint8_t clientCount();
+  bool consumeRecordToggle();                           // true once if a client hit Record
 }
 ```
 
 - SoftAP: SSID `XIAO-CAM-<last2bytes-of-MAC>`, password from a config constant
   (default provided, documented as changeable). Fixed IP `192.168.4.1`.
 - `WebServer` on port 80:
-  - `GET /` → minimal HTML page: `<img src="/stream">` plus a line of status text.
+  - `GET /` → single self-contained HTML page: the live `<img src="/stream">`, a
+    **Record / Stop** button, and a status line (recording state, current file,
+    fps, client count, SD free MB). ~30 lines of inline JS polls `GET /status`
+    once a second to keep the button label and status text in sync — so it also
+    reflects recordings started from the physical button.
   - `GET /stream` → `multipart/x-mixed-replace; boundary=frame`; loop writes the
     latest frame as `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n`
     + bytes, throttled to the available frame rate.
   - `GET /status` → JSON `{recording, file, frames, fps, clients, sdFreeMB}`.
+  - `POST /record` → toggles recording. The handler does **not** call `rec::*`
+    directly; it sets an internal "toggle requested" flag and returns the
+    latest `/status` JSON. `main` calls `net::consumeRecordToggle()` in the same
+    place it checks the physical button, so both inputs go through one code path
+    (`WebServer` is pumped synchronously from `loop()`, so no locking needed for
+    this flag).
 - `submitFrame` copies bytes into a single mutex-protected buffer (the "latest
   frame slot"), sized to a max expected JPEG (e.g. 64 KB, realloc if exceeded).
   The stream handler reads from this slot — it never touches `camera_fb_t`
@@ -236,7 +247,7 @@ loop():
   }
   net::handle();
   rec::tick();
-  if (btn::consumeShortPress()) {
+  if (btn::consumeShortPress() || net::consumeRecordToggle()) {   // physical OR web button
     if (!sdOk)            btn::blink(DOUBLE);        // no card
     else if (rec::isRecording()) { rec::stop();  btn::setLed(false); }
     else if (rec::start())         btn::setLed(true);
@@ -308,6 +319,9 @@ happens every iteration regardless of sink success.
 
 1. Power on → `XIAO-CAM-xxxx` AP appears; connect; `http://192.168.4.1` shows
    live video; `/status` JSON updates.
+1b. On the web page, click **Record** → LED on, status line shows the file and
+   "recording"; click **Stop** → LED off. Physical button and web button agree
+   (start with one, stop with the other).
 2. Press button → LED on; wait 30 s; press → LED off. Pull card, open
    `VID_00001.avi` in VLC: plays, ~30 s, correct orientation. `ffprobe` reports
    plausible fps/frame count.
