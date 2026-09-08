@@ -50,7 +50,7 @@ static void captureTask(void*) {
     if (rec::hadError()) { g_sdOk = false; led::set(LedPattern::FastError); }
 
     led::tick();
-    vTaskDelay(pdMS_TO_TICKS(5));   // yield — also keeps the chip cooler
+    vTaskDelay(pdMS_TO_TICKS(2));   // small yield
   }
 }
 

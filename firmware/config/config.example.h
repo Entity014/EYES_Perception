@@ -12,7 +12,9 @@
 #define OTA_HOSTNAME          "xiao-cam"
 #define OTA_PASSWORD          "changeme-ota"
 
-#define JPEG_QUALITY          12                // 10 (best) .. 15 (smaller)
+#define JPEG_QUALITY          12                // 10 (best) .. 18 (smaller/faster, lower latency)
+#define CAM_FRAMESIZE         FRAMESIZE_VGA     // FRAMESIZE_HVGA / _VGA / _SVGA ...
+#define CAM_FB_COUNT          2                 // 1 = lowest latency, lower fps; 2 = smoother
 #define REC_FLUSH_INTERVAL_MS 5000u
 
 #define LED_PIN               21

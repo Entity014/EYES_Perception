@@ -37,12 +37,12 @@ bool begin() {
   c.pin_sccb_sda = SIOD_GPIO_NUM; c.pin_sccb_scl = SIOC_GPIO_NUM;
   c.pin_pwdn = PWDN_GPIO_NUM;   c.pin_reset = RESET_GPIO_NUM;
   c.xclk_freq_hz = 20000000;
-  c.frame_size   = FRAMESIZE_VGA;
+  c.frame_size   = CAM_FRAMESIZE;
   c.pixel_format = PIXFORMAT_JPEG;
-  c.grab_mode    = CAMERA_GRAB_LATEST;
+  c.grab_mode    = CAMERA_GRAB_LATEST;   // always hand out the newest frame
   c.fb_location  = CAMERA_FB_IN_PSRAM;
   c.jpeg_quality = JPEG_QUALITY;
-  c.fb_count     = 2;
+  c.fb_count     = CAM_FB_COUNT;
 
   esp_err_t err = esp_camera_init(&c);
   if (err != ESP_OK) {

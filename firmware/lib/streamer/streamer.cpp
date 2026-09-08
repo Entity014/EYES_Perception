@@ -20,6 +20,7 @@ namespace {
   uint8_t*           g_slot   = nullptr;       // written by submitFrame
   uint8_t*           g_txbuf  = nullptr;       // handleStream's private copy
   volatile size_t    g_slotLen = 0;
+  volatile uint32_t  g_slotSeq = 0;            // bumped every new frame
   SemaphoreHandle_t  g_lock   = nullptr;
 
   NetStatus currentStatus() {
@@ -50,25 +51,27 @@ namespace {
 
   void handleStream() {
     WiFiClient client = g_server.client();
+    client.setNoDelay(true);            // no Nagle — send each frame immediately
+    WiFi.setSleep(false);               // no modem sleep while streaming (latency win)
     client.print("HTTP/1.1 200 OK\r\n"
                  "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
                  "Cache-Control: no-cache\r\n\r\n");
-    uint32_t lastSent = 0;
+    uint32_t lastSeq = 0;              // last frame we sent
     while (client.connected()) {
       g_server.handleClient();          // keep /status, /record alive during the stream
-      uint32_t now = millis();
-      if (now - lastSent < 40) { vTaskDelay(pdMS_TO_TICKS(2)); continue; }   // cap ~25 fps
-      lastSent = now;
 
-      // copy the newest frame out under the lock, then send it unlocked
+      // grab the newest frame under the lock, send it unlocked. skip if it is
+      // the same frame we already sent — never re-transmit a stale one.
       size_t len = 0;
       if (g_lock && xSemaphoreTake(g_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
-        len = g_slotLen;
-        if (len && len <= FRAME_BUF_CAP) memcpy(g_txbuf, g_slot, len);
-        else len = 0;
+        if (g_slotSeq != lastSeq && g_slotLen && g_slotLen <= FRAME_BUF_CAP) {
+          len = g_slotLen;
+          lastSeq = g_slotSeq;
+          memcpy(g_txbuf, g_slot, len);
+        }
         xSemaphoreGive(g_lock);
       }
-      if (!len) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
+      if (!len) { vTaskDelay(pdMS_TO_TICKS(2)); continue; }
 
       char hdr[80];
       int n = snprintf(hdr, sizeof(hdr),
@@ -78,6 +81,7 @@ namespace {
       if (client.write(g_txbuf, len) != len) break;
       if (client.write((const uint8_t*)"\r\n", 2) != 2) break;
     }
+    WiFi.setSleep(true);               // client gone — let the radio idle again
   }
 }
 
@@ -140,6 +144,7 @@ void submitFrame(const uint8_t* buf, size_t len) {
   if (g_lock && xSemaphoreTake(g_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
     memcpy(g_slot, buf, len);
     g_slotLen = len;
+    g_slotSeq++;
     xSemaphoreGive(g_lock);
   }
 }
