@@ -46,6 +46,7 @@ board_build.partitions = min_spiffs.csv
 build_flags =
     -DBOARD_HAS_PSRAM
     -DCORE_DEBUG_LEVEL=3
+    -I config                 ; makes <config.h> resolvable from every module
 lib_deps =
     espressif/esp32-camera
 monitor_speed = 115200
@@ -64,10 +65,31 @@ upload_protocol = esptool
 (If `esp32-camera` is already bundled with the arduino-esp32 core version in use,
 the explicit `lib_deps` line is dropped — decided at implementation time.)
 
+`-I config` is relative to `platformio.ini` (i.e. `firmware/config/`), so every
+library and `main.cpp` can `#include <config.h>` without a relative path.
+
 ## 3. Module Breakdown
 
-Each module is a `.h` / `.cpp` pair under `firmware/src/`. Interfaces are small
-and free of cross-module globals; `main.cpp` owns wiring and the capture loop.
+Each module is its own **PlatformIO local library** under `firmware/lib/<name>/`
+(`<name>.h` + `<name>.cpp`, plus a `library.json` where it has external deps).
+PlatformIO's Library Dependency Finder auto-compiles and links each one and
+resolves the dependencies between them; `firmware/src/` holds only `main.cpp`.
+Shared build-time configuration lives in `firmware/config/config.h`, put on the
+include path by `-I config` in `platformio.ini` so any library can `#include
+<config.h>`. Interfaces are small and free of cross-module globals; `main.cpp`
+owns wiring and the capture loop.
+
+Inter-library dependencies (declared in each `library.json` → `dependencies`, or
+left to the LDF):
+
+| Library | Depends on |
+|---|---|
+| `camera` | `esp32-camera`, `config` |
+| `avi_writer` | `FS` (Arduino core), `config` |
+| `recorder` | `avi_writer`, `SD_MMC`, `config` |
+| `streamer` | `WiFi`, `WebServer`, `config` |
+| `button` | `config` |
+| `ota` | `ArduinoOTA`, `Update`, `WebServer`, `config` |
 
 ### 3.1 `camera` — camera lifecycle and frame access
 
@@ -342,26 +364,31 @@ happens every iteration regardless of sink success.
 - Authentication on the web server
 - Automatic card-full rotation / oldest-file deletion
 - Long-press actions
-- OTA updates
 - Timestamp overlay on frames
 
 ## 8. File Layout
 
-```
+```text
 firmware/
-  platformio.ini            (rewritten: seeed_xiao_esp32s3, min_spiffs, espota)
+  platformio.ini              ; seeed_xiao_esp32s3, min_spiffs, espota, -I config
+  config/
+    config.h                  ; WiFi SSID/pass, OTA_PASSWORD, jpeg quality, flush interval, pins
+    config.example.h          ; committed template; config.h is git-ignored
   src/
-    main.cpp
-    config.h                (WiFi SSID/pass, OTA_PASSWORD, jpeg quality, flush interval, pins)
-    camera.h  camera.cpp
-    avi_writer.h  avi_writer.cpp
-    recorder.h  recorder.cpp
-    streamer.h  streamer.cpp
-    button.h  button.cpp
-    ota.h  ota.cpp
+    main.cpp                  ; the ONLY file in src/ — wiring + capture loop
+  lib/
+    camera/      camera.h      camera.cpp      library.json
+    avi_writer/  avi_writer.h  avi_writer.cpp  library.json
+    recorder/    recorder.h    recorder.cpp    library.json
+    streamer/    streamer.h    streamer.cpp    library.json   (+ index_html.h)
+    button/      button.h      button.cpp      library.json
+    ota/         ota.h         ota.cpp         library.json
   test/
-    test_avi_writer/
-    test_recorder_naming/
+    test_avi_writer/           ; native env, links lib/avi_writer only
+    test_recorder_naming/      ; native env, links lib/recorder naming logic
   docs/
     hardware-verification.md
 ```
+
+`config/config.h` is git-ignored; `config/config.example.h` is committed so a
+fresh checkout copies it. `.gitignore` gains `firmware/config/config.h`.
