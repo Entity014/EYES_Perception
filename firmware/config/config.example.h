@@ -12,6 +12,9 @@
 #define OTA_HOSTNAME          "xiao-cam"
 #define OTA_PASSWORD          "changeme-ota"
 
+#define PC_SERVER_HOST        "192.168.1.50"    // PC ingest server address
+#define PC_SERVER_PORT        9000u
+
 #define JPEG_QUALITY          12                // 10 (best) .. 18 (smaller/faster, lower latency)
 #define CAM_FRAMESIZE         FRAMESIZE_SVGA    // FRAMESIZE_HVGA / _VGA / _SVGA ... must match CAM_WIDTH/CAM_HEIGHT below
 #define CAM_WIDTH             800

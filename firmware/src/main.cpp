@@ -5,6 +5,7 @@
 #include "ota.h"
 #include "led.h"
 #include "usbstream.h"
+#include "pcstream.h"
 
 static bool          g_sdOk    = false;
 static volatile bool g_capture = true;   // cleared when an OTA update starts
@@ -39,9 +40,11 @@ static void captureTask(void*) {
       rec::onFrame(fb->buf, fb->len);
       net::submitFrame(fb->buf, fb->len);
       usb::submitFrame(fb->buf, fb->len);
+      pcstream::submitFrame(fb->buf, fb->len);
       cam::release(fb);
     }
     rec::tick();
+    pcstream::tick();
 
     if (net::consumeRecordToggle()) {
       if (!g_sdOk)                   led::set(LedPattern::DoubleBlink);
@@ -73,6 +76,7 @@ void setup() {
 
   net::setStatusProvider(statusProvider);
   net::begin();
+  pcstream::begin();
   ota::begin(onOtaStart);
   led::set(LedPattern::Off);
 
