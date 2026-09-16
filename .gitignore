@@ -1,4 +1,5 @@
 .pio/
 .vscode/
 .superpowers/
+.worktrees/
 firmware/config/config.h
