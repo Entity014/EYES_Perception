@@ -12,7 +12,7 @@ namespace {
   constexpr uint8_t  kSyncByte0 = 0xAA;
   constexpr uint8_t  kSyncByte1 = 0x55;
   constexpr const char* kSpoolPath = "/pcspool.bin";
-  constexpr uint32_t kReconnectIntervalMs = 3000;
+  constexpr uint32_t kReconnectIntervalMs = 5000;
   constexpr size_t   kDrainBufCap = 200000; // matches streamer.cpp's FRAME_BUF_CAP headroom
 
   WiFiClient       g_client;
@@ -29,8 +29,15 @@ namespace {
       (uint8_t)(seq), (uint8_t)(seq >> 8), (uint8_t)(seq >> 16), (uint8_t)(seq >> 24),
       (uint8_t)(len), (uint8_t)(len >> 8), (uint8_t)(len >> 16), (uint8_t)(len >> 24),
     };
-    return g_client.write(header, sizeof(header)) == sizeof(header) &&
-           g_client.write(buf, len) == len;
+    if (g_client.write(header, sizeof(header)) != sizeof(header)) {
+      g_client.stop();
+      return false;
+    }
+    if (g_client.write(buf, len) != len) {
+      g_client.stop();
+      return false;
+    }
+    return true;
   }
 
   void tryReconnect() {
@@ -38,7 +45,9 @@ namespace {
     uint32_t now = millis();
     if (now - g_lastReconnectAttempt < kReconnectIntervalMs) return;
     g_lastReconnectAttempt = now;
-    g_client.connect(PC_SERVER_HOST, PC_SERVER_PORT);
+    if (g_client.connect(PC_SERVER_HOST, PC_SERVER_PORT, 200)) {
+      g_client.setNoDelay(true);   // no Nagle — keeps the latency detector honest
+    }
   }
 }
 
@@ -48,6 +57,7 @@ void begin() {
   g_spool.begin(kSpoolPath);
   g_drainBuf = (uint8_t*)heap_caps_malloc(kDrainBufCap, MALLOC_CAP_SPIRAM);
   if (!g_drainBuf) g_drainBuf = (uint8_t*)malloc(kDrainBufCap);
+  if (!g_drainBuf) Serial.println("pcstream: drain buffer allocation failed, catch-up disabled");
   tryReconnect();
 }
 
@@ -60,28 +70,40 @@ void submitFrame(const uint8_t* buf, size_t len) {
     uint32_t dt = millis() - t0;
     if (!ok) {
       g_detector.recordFailure();
-      g_spool.append(seq, buf, len);
+      if (!g_spool.append(seq, buf, len)) {
+        Serial.printf("pcstream: spool write failed, frame %u lost\n", seq);
+      }
     } else {
       g_detector.recordSend(dt);
     }
   } else {
-    g_spool.append(seq, buf, len);
+    if (!g_spool.append(seq, buf, len)) {
+      Serial.printf("pcstream: spool write failed, frame %u lost\n", seq);
+    }
   }
 }
 
 void tick() {
   tryReconnect();
-  if (!g_client.connected() || g_detector.isDegraded()) return;
+  if (!g_client.connected() || !g_drainBuf) return;
   if (!g_spool.hasPending()) return;
-  if (!g_drainBuf) return;
 
+  // Used both to drain the backlog once healthy AND, while degraded, as the
+  // recovery probe: a successful backlog send counts as a fast/healthy send
+  // and feeds the detector, so recoverCount_ consecutive fast drains bring
+  // the link back out of degraded mode. At most one frame per tick() call.
   uint32_t seq; size_t len;
   if (!g_spool.readNext(seq, g_drainBuf, kDrainBufCap, len)) return;
-  if (sendFramed(seq, kFlagBacklog, g_drainBuf, len)) {
+
+  uint32_t t0 = millis();
+  bool ok = sendFramed(seq, kFlagBacklog, g_drainBuf, len);
+  uint32_t dt = millis() - t0;
+  if (ok) {
     g_spool.popFront();
+    g_detector.recordSend(dt);
+  } else {
+    g_detector.recordFailure();
   }
-  // On failure, leave it queued — the next tick() (or the next degraded
-  // cycle) will retry it. Never advance past an unsent frame.
 }
 
 } // namespace pcstream

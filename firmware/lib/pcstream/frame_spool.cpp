@@ -37,7 +37,16 @@ bool FrameSpool::readNext(uint32_t& seq, uint8_t* buf, size_t bufCap, size_t& ou
   if (f.read(header, sizeof(header)) != sizeof(header)) { f.close(); return false; }
   uint32_t len;
   decodeSpoolHeader(header, seq, len);
-  if (len > bufCap || f.read(buf, len) != len) { f.close(); return false; }
+  if (len > bufCap) {
+    // This record can never fit no matter how many times we retry it —
+    // advance past it so it doesn't wedge every frame queued behind it.
+    Serial.printf("pcstream: skipping oversize spool record (len=%u > cap=%u)\n",
+                  (unsigned)len, (unsigned)bufCap);
+    readOffset_ += SPOOL_HEADER_LEN + len;
+    f.close();
+    return false;
+  }
+  if (f.read(buf, len) != len) { f.close(); return false; }
   outLen = len;
   f.close();
   return true;

@@ -51,8 +51,9 @@ namespace {
   }
 
   void handleSetResolution() {
-    if (!g_server.hasArg("plain")) { g_server.send(400, "text/plain", "missing body"); return; }
-    String body = g_server.arg("plain");
+    String body = g_server.hasArg("plain") ? g_server.arg("plain")
+                : (g_server.args() > 0 ? g_server.argName(0) : String());
+    if (body.isEmpty()) { g_server.send(400, "text/plain", "missing body"); return; }
     framesize_t fs;
     if (body == "vga") fs = FRAMESIZE_VGA;
     else if (body == "svga") fs = FRAMESIZE_SVGA;
@@ -63,8 +64,13 @@ namespace {
   }
 
   void handleSetColormode() {
-    if (!g_server.hasArg("plain")) { g_server.send(400, "text/plain", "missing body"); return; }
-    bool gray = g_server.arg("plain") == "gray";
+    String body = g_server.hasArg("plain") ? g_server.arg("plain")
+                : (g_server.args() > 0 ? g_server.argName(0) : String());
+    if (body.isEmpty()) { g_server.send(400, "text/plain", "missing body"); return; }
+    bool gray;
+    if (body == "gray") gray = true;
+    else if (body == "color") gray = false;
+    else { g_server.send(400, "text/plain", "unknown mode"); return; }
     bool ok = cam::setGrayscale(gray);
     g_server.send(ok ? 200 : 500, "text/plain", ok ? "ok" : "failed");
   }

@@ -22,6 +22,12 @@
 #define HREF_GPIO_NUM  47
 #define PCLK_GPIO_NUM  13
 
+namespace {
+  // Tracks the sensor's current framesize since esp32-camera doesn't expose
+  // a "current width/height" getter. Kept in sync by begin() and setFramesize().
+  framesize_t g_currentFramesize = CAM_FRAMESIZE;
+}
+
 namespace cam {
 
 bool begin() {
@@ -49,6 +55,7 @@ bool begin() {
     Serial.printf("camera init failed: 0x%x\n", err);
     return false;
   }
+  g_currentFramesize = CAM_FRAMESIZE;
 
   // Bias exposure brighter and allow more sensor gain for dim rooms.
   sensor_t* s = esp_camera_sensor_get();
@@ -66,7 +73,9 @@ void release(camera_fb_t* fb)      { if (fb) esp_camera_fb_return(fb); }
 bool setFramesize(framesize_t fs) {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return false;
-  return s->set_framesize(s, fs) == 0;
+  bool ok = s->set_framesize(s, fs) == 0;
+  if (ok) g_currentFramesize = fs;
+  return ok;
 }
 
 bool setGrayscale(bool enable) {
@@ -77,6 +86,24 @@ bool setGrayscale(bool enable) {
   // flat chroma plane compresses to near-nothing under JPEG's DCT, so this
   // shrinks the file for free. See the design spec's colormode section.
   return s->set_saturation(s, enable ? -2 : 0) == 0;
+}
+
+uint16_t width() {
+  switch (g_currentFramesize) {
+    case FRAMESIZE_VGA:  return 640;
+    case FRAMESIZE_SVGA: return 800;
+    case FRAMESIZE_UXGA: return 1600;
+    default:             return CAM_WIDTH;
+  }
+}
+
+uint16_t height() {
+  switch (g_currentFramesize) {
+    case FRAMESIZE_VGA:  return 480;
+    case FRAMESIZE_SVGA: return 600;
+    case FRAMESIZE_UXGA: return 1200;
+    default:             return CAM_HEIGHT;
+  }
 }
 
 } // namespace cam
