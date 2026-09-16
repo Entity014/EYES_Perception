@@ -63,5 +63,21 @@ bool begin() {
 camera_fb_t* grab()               { return esp_camera_fb_get(); }
 void release(camera_fb_t* fb)      { if (fb) esp_camera_fb_return(fb); }
 
+bool setFramesize(framesize_t fs) {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return false;
+  return s->set_framesize(s, fs) == 0;
+}
+
+bool setGrayscale(bool enable) {
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) return false;
+  // Desaturating (rather than switching pixel_format to grayscale) keeps
+  // the hardware JPEG encoder in the loop — no software re-encode — and a
+  // flat chroma plane compresses to near-nothing under JPEG's DCT, so this
+  // shrinks the file for free. See the design spec's colormode section.
+  return s->set_saturation(s, enable ? -2 : 0) == 0;
+}
+
 } // namespace cam
 #endif

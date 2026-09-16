@@ -5,6 +5,7 @@
 #include <ESPmDNS.h>
 #include <config.h>
 #include "index_html.h"
+#include "camera.h"
 
 namespace {
   WebServer  g_server(80);
@@ -47,6 +48,25 @@ namespace {
   void handleRecord() {
     g_toggle = true;
     handleStatus();   // reply with fresh status
+  }
+
+  void handleSetResolution() {
+    if (!g_server.hasArg("plain")) { g_server.send(400, "text/plain", "missing body"); return; }
+    String body = g_server.arg("plain");
+    framesize_t fs;
+    if (body == "vga") fs = FRAMESIZE_VGA;
+    else if (body == "svga") fs = FRAMESIZE_SVGA;
+    else if (body == "uxga") fs = FRAMESIZE_UXGA;
+    else { g_server.send(400, "text/plain", "unknown size"); return; }
+    bool ok = cam::setFramesize(fs);
+    g_server.send(ok ? 200 : 500, "text/plain", ok ? "ok" : "failed");
+  }
+
+  void handleSetColormode() {
+    if (!g_server.hasArg("plain")) { g_server.send(400, "text/plain", "missing body"); return; }
+    bool gray = g_server.arg("plain") == "gray";
+    bool ok = cam::setGrayscale(gray);
+    g_server.send(ok ? 200 : 500, "text/plain", ok ? "ok" : "failed");
   }
 
   void handleStream() {
@@ -134,6 +154,8 @@ void begin() {
   g_server.on("/status", HTTP_GET, handleStatus);
   g_server.on("/record", HTTP_POST, handleRecord);
   g_server.on("/stream", HTTP_GET, handleStream);
+  g_server.on("/resolution", HTTP_POST, handleSetResolution);
+  g_server.on("/colormode", HTTP_POST, handleSetColormode);
   g_server.begin();
 }
 
