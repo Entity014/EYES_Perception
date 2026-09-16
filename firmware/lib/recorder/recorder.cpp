@@ -87,7 +87,7 @@ bool start() {
   if (!g_sdOk) return false;
   formatVideoPath(g_counter, g_path, sizeof(g_path));
   if (!g_sink.begin(g_path)) { g_error = true; return false; }
-  if (!g_writer.begin(g_sink, 640, 480)) { g_sink.close(); g_error = true; return false; }
+  if (!g_writer.begin(g_sink, CAM_WIDTH, CAM_HEIGHT)) { g_sink.close(); g_error = true; return false; }
   // reserve this number immediately so a crash never reuses it
   saveCounter(g_counter + 1);
   g_counter += 1;

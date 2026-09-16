@@ -49,6 +49,14 @@ bool begin() {
     Serial.printf("camera init failed: 0x%x\n", err);
     return false;
   }
+
+  // Bias exposure brighter and allow more sensor gain for dim rooms.
+  sensor_t* s = esp_camera_sensor_get();
+  if (s) {
+    s->set_brightness(s, 1);            // -2..2
+    s->set_ae_level(s, 1);              // -2..2, biases auto-exposure target brighter
+    s->set_gainceiling(s, GAINCEILING_8X);
+  }
   return true;
 }
 

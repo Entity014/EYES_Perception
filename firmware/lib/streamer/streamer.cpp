@@ -16,7 +16,7 @@ namespace {
   // so a FreeRTOS mutex guards the buffer (never a portMUX spinlock: this
   // holds across a multi-KB memcpy, which must not disable interrupts).
   // Fixed PSRAM buffers, no realloc, so the pointer can't move under a reader.
-  constexpr size_t   FRAME_BUF_CAP = 90000;   // > worst-case VGA JPEG
+  constexpr size_t   FRAME_BUF_CAP = 200000;  // > worst-case SVGA JPEG
   uint8_t*           g_slot   = nullptr;       // written by submitFrame
   uint8_t*           g_txbuf  = nullptr;       // handleStream's private copy
   volatile size_t    g_slotLen = 0;

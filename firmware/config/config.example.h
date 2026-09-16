@@ -13,8 +13,10 @@
 #define OTA_PASSWORD          "changeme-ota"
 
 #define JPEG_QUALITY          12                // 10 (best) .. 18 (smaller/faster, lower latency)
-#define CAM_FRAMESIZE         FRAMESIZE_VGA     // FRAMESIZE_HVGA / _VGA / _SVGA ...
-#define CAM_FB_COUNT          2                 // 1 = lowest latency, lower fps; 2 = smoother
+#define CAM_FRAMESIZE         FRAMESIZE_SVGA    // FRAMESIZE_HVGA / _VGA / _SVGA ... must match CAM_WIDTH/CAM_HEIGHT below
+#define CAM_WIDTH             800
+#define CAM_HEIGHT            600
+#define CAM_FB_COUNT          3                 // 1 = lowest latency; 3 = more headroom so a slow SD write can't tear frames while recording
 #define REC_FLUSH_INTERVAL_MS 5000u
 
 #define LED_PIN               21
