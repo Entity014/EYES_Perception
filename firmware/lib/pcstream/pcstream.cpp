@@ -13,12 +13,14 @@ namespace {
   constexpr uint8_t  kSyncByte1 = 0x55;
   constexpr const char* kSpoolPath = "/pcspool.bin";
   constexpr uint32_t kReconnectIntervalMs = 3000;
+  constexpr size_t   kDrainBufCap = 200000; // matches streamer.cpp's FRAME_BUF_CAP headroom
 
   WiFiClient       g_client;
   LatencyDetector  g_detector(150, 5, 5);
   FrameSpool       g_spool;
   uint32_t         g_nextSeq = 0;
   uint32_t         g_lastReconnectAttempt = 0;
+  uint8_t*         g_drainBuf = nullptr; // PSRAM-backed, allocated once in begin()
 
   // sync(2) + flag(1) + seq(4) + len(4) + payload
   bool sendFramed(uint32_t seq, uint8_t flag, const uint8_t* buf, size_t len) {
@@ -44,6 +46,8 @@ namespace pcstream {
 
 void begin() {
   g_spool.begin(kSpoolPath);
+  g_drainBuf = (uint8_t*)heap_caps_malloc(kDrainBufCap, MALLOC_CAP_SPIRAM);
+  if (!g_drainBuf) g_drainBuf = (uint8_t*)malloc(kDrainBufCap);
   tryReconnect();
 }
 
@@ -69,11 +73,11 @@ void tick() {
   tryReconnect();
   if (!g_client.connected() || g_detector.isDegraded()) return;
   if (!g_spool.hasPending()) return;
+  if (!g_drainBuf) return;
 
-  static uint8_t drainBuf[200000]; // matches streamer.cpp's FRAME_BUF_CAP headroom
   uint32_t seq; size_t len;
-  if (!g_spool.readNext(seq, drainBuf, sizeof(drainBuf), len)) return;
-  if (sendFramed(seq, kFlagBacklog, drainBuf, len)) {
+  if (!g_spool.readNext(seq, g_drainBuf, kDrainBufCap, len)) return;
+  if (sendFramed(seq, kFlagBacklog, g_drainBuf, len)) {
     g_spool.popFront();
   }
   // On failure, leave it queued — the next tick() (or the next degraded
