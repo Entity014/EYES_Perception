@@ -4,6 +4,7 @@
 #include "streamer.h"
 #include "ota.h"
 #include "led.h"
+#include "usbstream.h"
 
 static bool          g_sdOk    = false;
 static volatile bool g_capture = true;   // cleared when an OTA update starts
@@ -37,6 +38,7 @@ static void captureTask(void*) {
     if (fb) {
       rec::onFrame(fb->buf, fb->len);
       net::submitFrame(fb->buf, fb->len);
+      usb::submitFrame(fb->buf, fb->len);
       cam::release(fb);
     }
     rec::tick();

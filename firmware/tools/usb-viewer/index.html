@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>XIAO Cam — USB Viewer</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #eee; text-align: center; padding: 2rem; }
+  button { font-size: 1rem; padding: 0.5rem 1.5rem; cursor: pointer; }
+  button:disabled { cursor: default; opacity: 0.5; }
+  #frame { max-width: 90vw; margin-top: 1.5rem; border: 1px solid #333; }
+  #stats { margin-top: 0.75rem; color: #888; font-size: 0.9rem; }
+  #warning { color: #f66; margin-top: 1rem; }
+</style>
+</head>
+<body>
+  <h1>XIAO Cam — USB Viewer</h1>
+  <button id="connect">Connect</button>
+  <div id="warning" hidden>
+    Web Serial API not available. Use a Chromium-based browser (Chrome or Edge) over HTTPS or a local file.
+  </div>
+  <div><img id="frame" alt="(not connected)"></div>
+  <div id="stats"></div>
+
+<script>
+const connectBtn = document.getElementById('connect');
+const warning = document.getElementById('warning');
+const img = document.getElementById('frame');
+const stats = document.getElementById('stats');
+
+if (!('serial' in navigator)) {
+  warning.hidden = false;
+  connectBtn.disabled = true;
+}
+
+const SYNC0 = 0xAA, SYNC1 = 0x55;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let currentUrl = null;
+
+// Simple growable byte buffer fed by each serial read chunk; frames are
+// pulled out of it as soon as a full sync+length+payload is available.
+class ByteBuffer {
+  constructor() { this.chunks = []; this.length = 0; }
+  push(bytes) { this.chunks.push(bytes); this.length += bytes.length; }
+  byteAt(i) {
+    for (const c of this.chunks) {
+      if (i < c.length) return c[i];
+      i -= c.length;
+    }
+    return undefined;
+  }
+  slice(start, end) {
+    const out = new Uint8Array(end - start);
+    let o = 0, skip = start;
+    for (const c of this.chunks) {
+      if (skip >= c.length) { skip -= c.length; continue; }
+      const from = skip;
+      const take = Math.min(c.length - from, out.length - o);
+      out.set(c.subarray(from, from + take), o);
+      o += take;
+      skip = 0;
+      if (o >= out.length) break;
+    }
+    return out;
+  }
+  dropFront(n) {
+    let remaining = n;
+    while (remaining > 0 && this.chunks.length) {
+      const c = this.chunks[0];
+      if (c.length <= remaining) {
+        remaining -= c.length;
+        this.chunks.shift();
+      } else {
+        this.chunks[0] = c.subarray(remaining);
+        remaining = 0;
+      }
+    }
+    this.length -= n;
+  }
+}
+
+function tryExtractFrame(buf) {
+  // Scan for the sync marker; drop any stray bytes (e.g. log text) before it.
+  let i = 0;
+  while (i + 1 < buf.length && !(buf.byteAt(i) === SYNC0 && buf.byteAt(i + 1) === SYNC1)) i++;
+  if (i > 0) buf.dropFront(i);
+  if (buf.length < 6) return null; // need sync(2) + len(4)
+
+  const lenBytes = buf.slice(2, 6);
+  const len = lenBytes[0] | (lenBytes[1] << 8) | (lenBytes[2] << 16) | (lenBytes[3] << 24);
+  if (len <= 0 || len > 5_000_000) { buf.dropFront(2); return null; } // bad length, resync
+
+  const total = 6 + len;
+  if (buf.length < total) return null; // wait for more data
+
+  const jpeg = buf.slice(6, total);
+  buf.dropFront(total);
+  return jpeg;
+}
+
+async function readLoop(port) {
+  const buf = new ByteBuffer();
+  const reader = port.readable.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) buf.push(value);
+
+      let frame;
+      while ((frame = tryExtractFrame(buf)) !== null) {
+        if (currentUrl) URL.revokeObjectURL(currentUrl);
+        currentUrl = URL.createObjectURL(new Blob([frame], { type: 'image/jpeg' }));
+        img.src = currentUrl;
+
+        frameCount++;
+        const now = performance.now();
+        if (now - lastFpsTime >= 1000) {
+          stats.textContent = `${frameCount} fps`;
+          frameCount = 0;
+          lastFpsTime = now;
+        }
+      }
+    }
+  } catch (err) {
+    stats.textContent = `disconnected: ${err.message}`;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+connectBtn.addEventListener('click', async () => {
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 921600 });
+    connectBtn.disabled = true;
+    connectBtn.textContent = 'Connected';
+    readLoop(port);
+  } catch (err) {
+    stats.textContent = `connect failed: ${err.message}`;
+  }
+});
+</script>
+</body>
+</html>

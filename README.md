@@ -1,12 +1,15 @@
 # EYES Perception — XIAO ESP32-S3 Sense camera node
 
 Firmware for the **Seeed Studio XIAO ESP32-S3 Sense** that, from one camera
-pipeline, does three things at once:
+pipeline, does four things at once:
 
 1. **Live MJPEG stream** over WiFi — view it in any browser
 2. **Records video to microSD** as MJPEG-in-AVI, started/stopped from a button
    on the web page
 3. **OTA firmware update** over WiFi — no cable after the first flash
+4. **Live MJPEG stream over USB** — same frames, sent over the USB CDC
+   serial link for wireless-free prototyping (see
+   [`firmware/tools/usb-viewer/`](firmware/tools/usb-viewer/))
 
 ## Hardware
 
@@ -29,8 +32,10 @@ firmware/
     avi_writer/  MJPEG-in-AVI container (RIFF header + 00dc chunks + idx1)   [unit-tested]
     recorder/    SD sink, VID_NNNNN.avi naming, counter, flush, fps          [unit-tested]
     streamer/    SoftAP/STA, WebServer, /stream, /record, /status
+    usbstream/   MJPEG frames over USB CDC serial (sync+length framed)
     ota/         ArduinoOTA + /update web form
     led/         status-LED pattern engine                                   [unit-tested]
+  tools/usb-viewer/  static HTML page, no install — Web Serial API viewer
   test/          native (host) Unity test suites
   docs/hardware-verification.md
 docs/superpowers/
@@ -65,6 +70,16 @@ pio run -e xiao-ota -t upload            # uploads to xiao-cam.local
 ```
 
 or open `http://<device>/update` and upload `.pio/build/xiao/firmware.bin`.
+
+### Viewing the stream over USB (no WiFi needed)
+
+With the board plugged into USB, open
+[`firmware/tools/usb-viewer/index.html`](firmware/tools/usb-viewer/index.html)
+directly in Chrome or Edge (double-click it, no server or install required),
+click **Connect**, and pick the board's serial port. It uses the
+[Web Serial API](https://developer.chrome.com/docs/capabilities/serial),
+so Firefox/Safari aren't supported. This runs alongside WiFi streaming, not
+instead of it — both are fed from the same capture loop.
 
 ## Configuration (`firmware/config/config.h`)
 
