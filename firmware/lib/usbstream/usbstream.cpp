@@ -84,6 +84,7 @@ namespace {
     if (!path || !path[0]) { writeReply("ERR:no recording"); return; }
     File video = SD_MMC.open(path, FILE_READ);
     if (!video) { writeReply("ERR:no recording"); return; }
+    video.seek(0); // defensive: don't assume FILE_READ guarantees position 0
 
     writeReply("OK"); // from here on, chunks follow instead of another text reply
     g_downloading = true;
