@@ -23,6 +23,15 @@ namespace {
     return g_serialLock;
   }
 
+  // Set for the duration of handleDownload(). submitFrame() checks this and
+  // skips entirely (not just backing off) while a download is in progress:
+  // the capture task otherwise keeps re-acquiring g_serialLock every frame,
+  // which starves the file-chunk writer badly enough on a real link that a
+  // multi-chunk transfer can fail to ever get its EOF chunk out inside its
+  // own timeout. Live view simply freezes on the last frame until the
+  // download finishes, which is a fine tradeoff for a prototype tool.
+  volatile bool g_downloading = false;
+
   char g_lineBuf[64];
   size_t g_lineLen = 0;
 
@@ -77,6 +86,7 @@ namespace {
     if (!video) { writeReply("ERR:no recording"); return; }
 
     writeReply("OK"); // from here on, chunks follow instead of another text reply
+    g_downloading = true;
     uint8_t buf[2048];
     for (;;) {
       size_t n = video.read(buf, sizeof(buf));
@@ -85,6 +95,7 @@ namespace {
     }
     video.close();
     sendFileChunk(nullptr, 0); // EOF marker
+    g_downloading = false;
   }
 
   void handleLine(const char* line) {
@@ -117,7 +128,8 @@ namespace usb {
   }
 
   void submitFrame(const uint8_t* buf, size_t len) {
-    if (!Serial) return;   // no host has the USB CDC port open
+    if (!Serial) return;       // no host has the USB CDC port open
+    if (g_downloading) return; // yield the wire entirely to the file transfer
     if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(50)) != pdTRUE) return;
 
     uint8_t header[6] = {
