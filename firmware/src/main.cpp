@@ -2,6 +2,7 @@
 #include "camera.h"
 #include "recorder.h"
 #include "streamer.h"
+#include "cameractl.h"
 #include "ota.h"
 #include "led.h"
 #include "usbstream.h"
@@ -65,7 +66,7 @@ static void captureTask(void*) {
     rec::tick();
     if (!(RECORDING_PRIORITY && rec::isRecording())) pcstream::tick();
 
-    if (net::consumeRecordToggle()) {
+    if (cameractl::consumeRecordToggle()) {
       if (!g_sdOk)                   led::set(LedPattern::DoubleBlink);
       else if (rec::isRecording()) { rec::stop(); led::set(LedPattern::Off); }
       else if (rec::start())         { led::set(LedPattern::Recording); }
@@ -93,7 +94,7 @@ void setup() {
   g_sdOk = rec::begin();
   Serial.println(g_sdOk ? "SD ready" : "SD unavailable (streaming only)");
 
-  net::setStatusProvider(statusProvider);
+  cameractl::setStatusProvider(statusProvider);
   net::begin();
   pcstream::begin();
   ota::begin(onOtaStart);
