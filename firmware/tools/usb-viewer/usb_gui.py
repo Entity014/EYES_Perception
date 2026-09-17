@@ -287,9 +287,16 @@ connectBtn.addEventListener('click', async () => {
   }
 });
 
-document.getElementById('record').addEventListener('click', async () => {
-  try { message.textContent = await pywebview.api.record(); }
-  catch (err) { message.textContent = String(err); }
+const recordBtn = document.getElementById('record');
+let recording = false;
+recordBtn.addEventListener('click', async () => {
+  try {
+    message.textContent = await pywebview.api.record();
+    recording = !recording;
+    recordBtn.textContent = recording ? 'Stop' : 'Record';
+  } catch (err) {
+    message.textContent = String(err);
+  }
 });
 
 document.getElementById('download').addEventListener('click', async (e) => {
@@ -336,6 +343,8 @@ function setDisconnected() {
   connectBtn.disabled = false;
   connectBtn.textContent = 'Connect';
   message.textContent = 'Disconnected';
+  recording = false;
+  recordBtn.textContent = 'Record';
 }
 
 // pywebview injects window.pywebview.api asynchronously after the page
