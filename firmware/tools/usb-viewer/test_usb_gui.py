@@ -178,3 +178,25 @@ def test_demux_step_distinguishes_file_chunk_from_frame_and_line():
     kind, value, buf = demux_step(buf)
     assert kind is None
     assert bytes(buf) == b""
+
+
+def test_demux_step_discards_garbage_line_that_is_not_a_real_reply():
+    # Leading noise containing a coincidental 0x0A before the next real
+    # marker must not be surfaced as a fake "reply" -- it should be
+    # silently discarded, and the real frame after it recovered normally.
+    payload = b"\xff\xd8\xff\xd9"
+    buf = bytearray(b"\x91\x0a\x02garbage" + SYNC + len(payload).to_bytes(4, "little") + payload)
+
+    kind, value, buf = demux_step(buf)
+    assert (kind, value) == ("frame", payload)
+    assert bytes(buf) == b""
+
+
+def test_demux_step_still_accepts_real_ok_and_err_replies():
+    buf = bytearray(b"OK\nERR:unknown command\n")
+
+    kind, value, buf = demux_step(buf)
+    assert (kind, value) == ("line", "OK")
+
+    kind, value, buf = demux_step(buf)
+    assert (kind, value) == ("line", "ERR:unknown command")

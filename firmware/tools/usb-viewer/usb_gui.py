@@ -97,23 +97,38 @@ def demux_step(buf):
 
     Returns (kind, value, buf) where kind is "line", "frame", "file_chunk",
     or None if nothing complete is available yet (value is None then).
-    """
-    nl = buf.find(b"\n")
-    fi = buf.find(SYNC)
-    ci = buf.find(FILE_SYNC)
-    candidates = [(pos, kind) for pos, kind in ((nl, "line"), (fi, "frame"), (ci, "file_chunk")) if pos != -1]
-    if not candidates:
-        return None, None, buf
-    _, winner = min(candidates)
 
-    if winner == "line":
-        line, buf = extract_line(buf)
-        return (None, None, buf) if line is None else ("line", line, buf)
-    if winner == "file_chunk":
-        chunk, buf = extract_file_chunk(buf)
-        return (None, None, buf) if chunk is None else ("file_chunk", chunk, buf)
-    frame, buf = extract_frame(buf)
-    return (None, None, buf) if frame is None else ("frame", frame, buf)
+    A byte pair matching SYNC/FILE_SYNC, or a 0x0A, can also turn up by pure
+    chance inside leading noise that precedes the next real marker (e.g. a
+    torn read boundary splitting a 2-byte marker, or a stray byte from
+    outside this module's own writes on the wire — see g_serialLock's scope
+    comment in usbstream.cpp). If that noise happens to contain a 0x0A
+    before the real marker, "line" would otherwise win and extract_line()
+    would hand back binary garbage decoded as text, which a caller could
+    mistake for a genuine reply. Guard against that by only trusting a
+    "line" whose content actually looks like this protocol's replies.
+    """
+    while True:
+        nl = buf.find(b"\n")
+        fi = buf.find(SYNC)
+        ci = buf.find(FILE_SYNC)
+        candidates = [(pos, kind) for pos, kind in ((nl, "line"), (fi, "frame"), (ci, "file_chunk")) if pos != -1]
+        if not candidates:
+            return None, None, buf
+        _, winner = min(candidates)
+
+        if winner == "line":
+            line, buf = extract_line(buf)
+            if line is None:
+                return None, None, buf
+            if line == "OK" or line.startswith("OK:") or line.startswith("ERR:"):
+                return "line", line, buf
+            continue  # not a real reply -- noise, discard and keep scanning
+        if winner == "file_chunk":
+            chunk, buf = extract_file_chunk(buf)
+            return (None, None, buf) if chunk is None else ("file_chunk", chunk, buf)
+        frame, buf = extract_frame(buf)
+        return (None, None, buf) if frame is None else ("frame", frame, buf)
 
 
 class UsbTransport:
