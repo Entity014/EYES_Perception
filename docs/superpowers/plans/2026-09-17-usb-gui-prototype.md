@@ -824,7 +824,7 @@ class UsbTransport:
                     self._on_status(line)
 ```
 
-Note: `extract_frame`/`extract_line` in the read loop assume replies never arrive interleaved *inside* a frame's byte range — true here because the firmware serializes all its `Serial.write()` calls behind `g_serialLock` (Task 3), so each frame or reply is written atomically before the next one starts.
+Note: `extract_frame`/`extract_line` in the read loop assume replies never arrive interleaved *inside* a frame's byte range — true for frames and replies relative to each other, because `usbstream.cpp` serializes its own `Serial.write()` calls (frame writes and command replies) behind `g_serialLock` (Task 3), so each frame or reply is written atomically before the next one starts. `g_serialLock` only guards `usbstream.cpp`'s own writes, though — it does not serialize the whole firmware's `Serial` output. Other modules (`pcstream.cpp`, `frame_spool.cpp`, `recorder.cpp`, `camera.cpp`, `streamer.cpp`) and the ESP32 core's own debug logging (`CORE_DEBUG_LEVEL`) write to the same `Serial`/USB-CDC port without going through this lock, so their output can still interleave into the wire format. That's a known pre-existing limitation this branch does not attempt to solve.
 
 - [ ] **Step 2: Manual smoke test (no hardware required yet)**
 

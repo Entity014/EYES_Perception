@@ -13,22 +13,34 @@ import serial.tools.list_ports
 SYNC = bytes([0xAA, 0x55])
 
 
+MAX_FRAME_LEN = 5_000_000
+
+
 def extract_frame(buf):
-    i = buf.find(SYNC)
-    if i == -1:
-        # No sync yet; keep the buffer unchanged for text or next frame data
-        return None, buf
-    if i > 0:
-        del buf[:i]
-    if len(buf) < 6:
-        return None, buf
-    length = int.from_bytes(buf[2:6], "little")
-    total = 6 + length
-    if len(buf) < total:
-        return None, buf
-    frame = bytes(buf[6:total])
-    del buf[:total]
-    return frame, buf
+    while True:
+        i = buf.find(SYNC)
+        if i == -1:
+            # No sync yet; keep the buffer unchanged for text or next frame data
+            return None, buf
+        if i > 0:
+            del buf[:i]
+        if len(buf) < 6:
+            return None, buf
+        length = int.from_bytes(buf[2:6], "little")
+        if length <= 0 or length > MAX_FRAME_LEN:
+            # Bogus length: this sync marker is a false positive (e.g.
+            # found inside JPEG payload bytes during a mid-stream connect,
+            # or a resync after a desync at connect time). Drop just the 2
+            # sync bytes and re-scan for a real one, instead of waiting
+            # forever for a buffer that will never reach this "length".
+            del buf[:2]
+            continue
+        total = 6 + length
+        if len(buf) < total:
+            return None, buf
+        frame = bytes(buf[6:total])
+        del buf[:total]
+        return frame, buf
 
 
 def extract_line(buf):
@@ -40,10 +52,38 @@ def extract_line(buf):
     return raw.rstrip(b"\r").decode("ascii", errors="replace"), buf
 
 
+def demux_step(buf):
+    """Pull the next complete item (a reply line or a frame) out of buf, in
+    actual stream order.
+
+    A line is only recognized as a line if its '\\n' comes before the next
+    frame's sync marker — a naive "drain all frames, then drain all lines"
+    approach discards any reply line sitting in front of a frame's sync
+    bytes, because extract_frame() deletes everything before the sync it
+    finds. The `nl < i` check below is also what stops a stray 0x0A byte
+    inside JPEG payload data from being mistaken for a line terminator.
+
+    Returns (kind, value, buf) where kind is "line", "frame", or None if
+    nothing complete is available yet (value is None in that case).
+    """
+    i = buf.find(SYNC)
+    nl = buf.find(b"\n")
+    if nl != -1 and (i == -1 or nl < i):
+        line, buf = extract_line(buf)
+        if line is None:
+            return None, None, buf
+        return "line", line, buf
+    frame, buf = extract_frame(buf)
+    if frame is None:
+        return None, None, buf
+    return "frame", frame, buf
+
+
 class UsbTransport:
-    def __init__(self, on_frame, on_status=None):
+    def __init__(self, on_frame, on_status=None, on_disconnect=None):
         self._on_frame = on_frame
         self._on_status = on_status
+        self._on_disconnect = on_disconnect
         self._port = None
         self._buf = bytearray()
         self._reply_q = queue.Queue()
@@ -100,21 +140,21 @@ class UsbTransport:
                 except Exception:
                     pass
                 self._port = None
+                if self._on_disconnect:
+                    self._on_disconnect()
                 break
             if chunk:
                 self._buf.extend(chunk)
             while True:
-                frame, self._buf = extract_frame(self._buf)
-                if frame is None:
+                kind, value, self._buf = demux_step(self._buf)
+                if kind is None:
                     break
-                self._on_frame(frame)
-            while True:
-                line, self._buf = extract_line(self._buf)
-                if line is None:
-                    break
-                self._reply_q.put(line)
-                if self._on_status and line.startswith("OK:"):
-                    self._on_status(line)
+                if kind == "line":
+                    self._reply_q.put(value)
+                    if self._on_status and value.startswith("OK:"):
+                        self._on_status(value)
+                else:
+                    self._on_frame(value)
 
 
 HTML = """
@@ -212,6 +252,15 @@ function pushFrame(base64Jpeg) {
   }
 }
 
+// Called from Python via evaluate_js when the reader thread detects a
+// closed/errored port (cable pull, device reset). Flips the UI back to a
+// disconnected state so the user can reconnect without restarting the app.
+function setDisconnected() {
+  connectBtn.disabled = false;
+  connectBtn.textContent = 'Connect';
+  message.textContent = 'Disconnected';
+}
+
 refreshPorts();
 </script>
 </body>
@@ -222,7 +271,9 @@ refreshPorts();
 class Api:
     def __init__(self):
         self._window = None
-        self._transport = UsbTransport(on_frame=self._push_frame)
+        self._transport = UsbTransport(
+            on_frame=self._push_frame, on_disconnect=self._handle_disconnect
+        )
 
     def set_window(self, window):
         self._window = window
@@ -232,6 +283,10 @@ class Api:
         b64 = base64.b64encode(jpeg_bytes).decode("ascii")
         if self._window:
             self._window.evaluate_js(f"pushFrame('{b64}')")
+
+    def _handle_disconnect(self):
+        if self._window:
+            self._window.evaluate_js("setDisconnected()")
 
     def list_ports(self):
         return self._transport.list_ports()

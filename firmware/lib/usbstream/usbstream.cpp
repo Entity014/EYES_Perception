@@ -7,6 +7,14 @@ namespace {
   // loop() (core 1). Both write to the same Serial (USB CDC) — without this
   // lock a frame header/payload and a command reply line could interleave
   // on the wire and corrupt both.
+  //
+  // Scope limitation: this lock only serializes THIS module's own writes
+  // (frames + command replies) with each other. It does NOT prevent other
+  // firmware modules (pcstream.cpp, frame_spool.cpp, recorder.cpp,
+  // camera.cpp, streamer.cpp — none of which go through g_serialLock) or
+  // the ESP32 core's own debug logging (CORE_DEBUG_LEVEL) from writing to
+  // the same Serial/USB-CDC port and interleaving into the wire format.
+  // That's a known pre-existing limitation, not something this lock solves.
   SemaphoreHandle_t g_serialLock = nullptr;
 
   SemaphoreHandle_t serialLock() {
@@ -17,7 +25,12 @@ namespace {
   size_t g_lineLen = 0;
 
   void writeReply(const char* line) {
-    if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(50)) != pdTRUE) return;
+    // Replies are infrequent, human-triggered events (not the hot frame
+    // path), so it's cheap to wait meaningfully longer than submitFrame()'s
+    // 50ms for the lock: at larger resolutions (e.g. UXGA) submitFrame()
+    // can plausibly hold the lock for longer than 50ms writing a full JPEG
+    // over USB CDC, and a short timeout here would silently drop the reply.
+    if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(500)) != pdTRUE) return;
     Serial.print(line);
     Serial.print('\n');
     xSemaphoreGive(serialLock());
