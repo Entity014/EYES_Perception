@@ -71,14 +71,16 @@ class UsbTransport:
         self._buf.clear()
 
     def is_connected(self):
-        return self._port is not None and self._port.is_open
+        port = self._port
+        return port is not None and port.is_open
 
     def send_command(self, line, timeout=2.0):
-        if not self.is_connected():
+        port = self._port
+        if port is None or not port.is_open:
             raise RuntimeError("not connected")
         with self._reply_q.mutex:
             self._reply_q.queue.clear()
-        self._port.write((line + "\n").encode("ascii"))
+        port.write((line + "\n").encode("ascii"))
         try:
             return self._reply_q.get(timeout=timeout)
         except queue.Empty:
