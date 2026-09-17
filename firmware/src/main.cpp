@@ -17,6 +17,10 @@
 #define ENABLE_USB_STREAM false
 #endif
 
+#ifndef WIFI_ENABLED
+#define WIFI_ENABLED true // false = USB-only prototyping: no WiFi radio, no OTA, no PC ingest
+#endif
+
 #ifndef CAPTURE_CPU_MHZ
 #define CAPTURE_CPU_MHZ 240
 #endif
@@ -29,7 +33,7 @@ static NetStatus statusProvider() {
     rec::isRecording(),
     rec::currentPath(),
     rec::fps(),
-    net::clientCount(),
+    WIFI_ENABLED ? net::clientCount() : 0,
     rec::sdFreeMB(),
     g_sdOk
   };
@@ -58,14 +62,14 @@ static void captureTask(void*) {
       // recording exclusive use of the capture loop.
       const bool recordingPriorityActive = RECORDING_PRIORITY && rec::isRecording();
       if (!recordingPriorityActive) {
-        net::submitFrame(fb->buf, fb->len);
+        if (WIFI_ENABLED) net::submitFrame(fb->buf, fb->len);
         if (ENABLE_USB_STREAM) usb::submitFrame(fb->buf, fb->len);
-        pcstream::submitFrame(fb->buf, fb->len);
+        if (WIFI_ENABLED) pcstream::submitFrame(fb->buf, fb->len);
       }
       cam::release(fb);
     }
     rec::tick();
-    if (!(RECORDING_PRIORITY && rec::isRecording())) pcstream::tick();
+    if (WIFI_ENABLED && !(RECORDING_PRIORITY && rec::isRecording())) pcstream::tick();
 
     if (cameractl::consumeRecordToggle()) {
       if (!g_sdOk)                   led::set(LedPattern::DoubleBlink);
@@ -96,9 +100,11 @@ void setup() {
   Serial.println(g_sdOk ? "SD ready" : "SD unavailable (streaming only)");
 
   cameractl::setStatusProvider(statusProvider);
-  net::begin();
-  pcstream::begin();
-  ota::begin(onOtaStart);
+  if (WIFI_ENABLED) {
+    net::begin();
+    pcstream::begin();
+    ota::begin(onOtaStart);
+  }
   led::set(LedPattern::Off);
   if (ENABLE_USB_STREAM) usb::begin();
 
@@ -106,8 +112,10 @@ void setup() {
 }
 
 void loop() {
-  ota::handle();
-  net::handle();
+  if (WIFI_ENABLED) {
+    ota::handle();
+    net::handle();
+  }
   if (ENABLE_USB_STREAM) usb::pollCommands();
   delay(2);
 }
