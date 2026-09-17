@@ -3,6 +3,7 @@ talking to the firmware over USB CDC serial instead of WiFi. Single file
 by design — see docs/superpowers/specs/2026-09-17-usb-gui-prototype-design.md.
 """
 
+import os
 import queue
 import threading
 import time
@@ -11,9 +12,11 @@ import serial
 import serial.tools.list_ports
 
 SYNC = bytes([0xAA, 0x55])
+FILE_SYNC = bytes([0xDD, 0x44])
 
 
 MAX_FRAME_LEN = 5_000_000
+MAX_FILE_CHUNK_LEN = 65_536
 
 
 def extract_frame(buf):
@@ -43,6 +46,33 @@ def extract_frame(buf):
         return frame, buf
 
 
+def extract_file_chunk(buf):
+    """Same framing as extract_frame (sync + u32-LE length + bytes), but
+    with FILE_SYNC and a length of 0 is a valid, meaningful chunk (the
+    end-of-file marker) rather than a rejected one. Returns (chunk, buf):
+    chunk is None while waiting for more data, b"" for the EOF marker, or
+    the chunk's bytes otherwise.
+    """
+    while True:
+        i = buf.find(FILE_SYNC)
+        if i == -1:
+            return None, buf
+        if i > 0:
+            del buf[:i]
+        if len(buf) < 6:
+            return None, buf
+        length = int.from_bytes(buf[2:6], "little")
+        if length > MAX_FILE_CHUNK_LEN:
+            del buf[:2]
+            continue
+        total = 6 + length
+        if len(buf) < total:
+            return None, buf
+        chunk = bytes(buf[6:total])
+        del buf[:total]
+        return chunk, buf
+
+
 def extract_line(buf):
     nl = buf.find(b"\n")
     if nl == -1:
@@ -53,30 +83,37 @@ def extract_line(buf):
 
 
 def demux_step(buf):
-    """Pull the next complete item (a reply line or a frame) out of buf, in
-    actual stream order.
+    """Pull the next complete item (a reply line, a frame, or a file chunk)
+    out of buf, in actual stream order.
 
-    A line is only recognized as a line if its '\\n' comes before the next
-    frame's sync marker — a naive "drain all frames, then drain all lines"
-    approach discards any reply line sitting in front of a frame's sync
-    bytes, because extract_frame() deletes everything before the sync it
-    finds. The `nl < i` check below is also what stops a stray 0x0A byte
-    inside JPEG payload data from being mistaken for a line terminator.
+    An item is only recognized as such if its marker (a '\\n' for a line,
+    the 2-byte sync for a frame or a file chunk) comes before either of the
+    other two candidates — a naive "drain all of one kind, then the next"
+    approach discards whatever sits in front of the next marker, because
+    each extractor deletes everything before the marker it finds. Picking
+    whichever candidate's marker has the lowest byte offset is also what
+    stops a stray 0x0A / sync-like byte pair inside frame or file payload
+    data from being mistaken for a different kind of marker.
 
-    Returns (kind, value, buf) where kind is "line", "frame", or None if
-    nothing complete is available yet (value is None in that case).
+    Returns (kind, value, buf) where kind is "line", "frame", "file_chunk",
+    or None if nothing complete is available yet (value is None then).
     """
-    i = buf.find(SYNC)
     nl = buf.find(b"\n")
-    if nl != -1 and (i == -1 or nl < i):
-        line, buf = extract_line(buf)
-        if line is None:
-            return None, None, buf
-        return "line", line, buf
-    frame, buf = extract_frame(buf)
-    if frame is None:
+    fi = buf.find(SYNC)
+    ci = buf.find(FILE_SYNC)
+    candidates = [(pos, kind) for pos, kind in ((nl, "line"), (fi, "frame"), (ci, "file_chunk")) if pos != -1]
+    if not candidates:
         return None, None, buf
-    return "frame", frame, buf
+    _, winner = min(candidates)
+
+    if winner == "line":
+        line, buf = extract_line(buf)
+        return (None, None, buf) if line is None else ("line", line, buf)
+    if winner == "file_chunk":
+        chunk, buf = extract_file_chunk(buf)
+        return (None, None, buf) if chunk is None else ("file_chunk", chunk, buf)
+    frame, buf = extract_frame(buf)
+    return (None, None, buf) if frame is None else ("frame", frame, buf)
 
 
 class UsbTransport:
@@ -89,6 +126,8 @@ class UsbTransport:
         self._reply_q = queue.Queue()
         self._reader_thread = None
         self._stop = threading.Event()
+        self._download_buf = None       # bytearray while a download is in progress, else None
+        self._download_done = threading.Event()
 
     def list_ports(self):
         return [p.device for p in serial.tools.list_ports.comports()]
@@ -153,8 +192,35 @@ class UsbTransport:
                     self._reply_q.put(value)
                     if self._on_status and value.startswith("OK:"):
                         self._on_status(value)
+                elif kind == "file_chunk":
+                    if self._download_buf is None:
+                        continue  # stray/unexpected chunk with no download in progress
+                    if value == b"":  # EOF marker
+                        self._download_done.set()
+                    else:
+                        self._download_buf.extend(value)
                 else:
                     self._on_frame(value)
+
+    def download(self, save_path, timeout=30.0):
+        """Requests the firmware's last finished recording and writes it to
+        save_path. Raises the same errors send_command() would (not
+        connected, ERR:<reason> reply, timeout) if the firmware refuses;
+        raises TimeoutError if the file transfer itself stalls.
+        """
+        self._download_buf = bytearray()
+        self._download_done.clear()
+        try:
+            reply = self.send_command("DOWNLOAD", timeout=timeout)
+            if reply != "OK":
+                raise RuntimeError(reply)
+            if not self._download_done.wait(timeout=timeout):
+                raise TimeoutError("download stalled: no EOF marker received")
+            with open(save_path, "wb") as f:
+                f.write(self._download_buf)
+            return save_path
+        finally:
+            self._download_buf = None
 
 
 HTML = """
@@ -181,6 +247,7 @@ HTML = """
   <div id="stats">0 fps</div>
   <div class="controls">
     <button id="record">Record</button>
+    <button id="download">Download last recording</button>
     <label>Resolution
       <select id="resolution">
         <option value="vga">VGA</option>
@@ -223,6 +290,15 @@ connectBtn.addEventListener('click', async () => {
 document.getElementById('record').addEventListener('click', async () => {
   try { message.textContent = await pywebview.api.record(); }
   catch (err) { message.textContent = String(err); }
+});
+
+document.getElementById('download').addEventListener('click', async (e) => {
+  const btn = e.target;
+  btn.disabled = true;
+  message.textContent = 'Downloading (live view will stutter until it finishes)...';
+  try { message.textContent = await pywebview.api.download(); }
+  catch (err) { message.textContent = `download failed: ${err}`; }
+  finally { btn.disabled = false; }
 });
 
 document.getElementById('resolution').addEventListener('change', async (e) => {
@@ -310,6 +386,14 @@ class Api:
 
     def set_grayscale(self, value):
         return self._transport.send_command(f"COLOR:{value}")
+
+    def download(self):
+        downloads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
+        os.makedirs(downloads_dir, exist_ok=True)
+        filename = time.strftime("recording_%Y%m%d_%H%M%S.avi")
+        save_path = os.path.join(downloads_dir, filename)
+        self._transport.download(save_path)
+        return f"saved to {save_path}"
 
 
 if __name__ == "__main__":
