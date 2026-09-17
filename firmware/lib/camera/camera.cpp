@@ -5,106 +5,160 @@
 #include <config.h>
 
 // Pin map for the Seeed XIAO ESP32-S3 Sense (OV2640).
-#define PWDN_GPIO_NUM  -1
+#define PWDN_GPIO_NUM -1
 #define RESET_GPIO_NUM -1
-#define XCLK_GPIO_NUM  10
-#define SIOD_GPIO_NUM  40
-#define SIOC_GPIO_NUM  39
-#define Y9_GPIO_NUM    48
-#define Y8_GPIO_NUM    11
-#define Y7_GPIO_NUM    12
-#define Y6_GPIO_NUM    14
-#define Y5_GPIO_NUM    16
-#define Y4_GPIO_NUM    18
-#define Y3_GPIO_NUM    17
-#define Y2_GPIO_NUM    15
+#define XCLK_GPIO_NUM 10
+#define SIOD_GPIO_NUM 40
+#define SIOC_GPIO_NUM 39
+#define Y9_GPIO_NUM 48
+#define Y8_GPIO_NUM 11
+#define Y7_GPIO_NUM 12
+#define Y6_GPIO_NUM 14
+#define Y5_GPIO_NUM 16
+#define Y4_GPIO_NUM 18
+#define Y3_GPIO_NUM 17
+#define Y2_GPIO_NUM 15
 #define VSYNC_GPIO_NUM 38
-#define HREF_GPIO_NUM  47
-#define PCLK_GPIO_NUM  13
+#define HREF_GPIO_NUM 47
+#define PCLK_GPIO_NUM 13
 
-namespace {
+namespace
+{
   // Tracks the sensor's current framesize since esp32-camera doesn't expose
   // a "current width/height" getter. Kept in sync by begin() and setFramesize().
   framesize_t g_currentFramesize = CAM_FRAMESIZE;
 }
 
-namespace cam {
+int cam::grayscaleSpecialEffect(bool enable)
+{
+  return enable ? 2 : 0;
+}
 
-bool begin() {
-  camera_config_t c = {};
-  c.ledc_channel = LEDC_CHANNEL_0;
-  c.ledc_timer   = LEDC_TIMER_0;
-  c.pin_d0 = Y2_GPIO_NUM;  c.pin_d1 = Y3_GPIO_NUM;
-  c.pin_d2 = Y4_GPIO_NUM;  c.pin_d3 = Y5_GPIO_NUM;
-  c.pin_d4 = Y6_GPIO_NUM;  c.pin_d5 = Y7_GPIO_NUM;
-  c.pin_d6 = Y8_GPIO_NUM;  c.pin_d7 = Y9_GPIO_NUM;
-  c.pin_xclk = XCLK_GPIO_NUM;   c.pin_pclk = PCLK_GPIO_NUM;
-  c.pin_vsync = VSYNC_GPIO_NUM; c.pin_href = HREF_GPIO_NUM;
-  c.pin_sccb_sda = SIOD_GPIO_NUM; c.pin_sccb_scl = SIOC_GPIO_NUM;
-  c.pin_pwdn = PWDN_GPIO_NUM;   c.pin_reset = RESET_GPIO_NUM;
-  c.xclk_freq_hz = 20000000;
-  c.frame_size   = CAM_FRAMESIZE;
-  c.pixel_format = PIXFORMAT_JPEG;
-  c.grab_mode    = CAMERA_GRAB_LATEST;   // always hand out the newest frame
-  c.fb_location  = CAMERA_FB_IN_PSRAM;
-  c.jpeg_quality = JPEG_QUALITY;
-  c.fb_count     = CAM_FB_COUNT;
+namespace cam
+{
 
-  esp_err_t err = esp_camera_init(&c);
-  if (err != ESP_OK) {
-    Serial.printf("camera init failed: 0x%x\n", err);
-    return false;
+  bool begin()
+  {
+    camera_config_t c = {};
+    c.ledc_channel = LEDC_CHANNEL_0;
+    c.ledc_timer = LEDC_TIMER_0;
+    c.pin_d0 = Y2_GPIO_NUM;
+    c.pin_d1 = Y3_GPIO_NUM;
+    c.pin_d2 = Y4_GPIO_NUM;
+    c.pin_d3 = Y5_GPIO_NUM;
+    c.pin_d4 = Y6_GPIO_NUM;
+    c.pin_d5 = Y7_GPIO_NUM;
+    c.pin_d6 = Y8_GPIO_NUM;
+    c.pin_d7 = Y9_GPIO_NUM;
+    c.pin_xclk = XCLK_GPIO_NUM;
+    c.pin_pclk = PCLK_GPIO_NUM;
+    c.pin_vsync = VSYNC_GPIO_NUM;
+    c.pin_href = HREF_GPIO_NUM;
+    c.pin_sccb_sda = SIOD_GPIO_NUM;
+    c.pin_sccb_scl = SIOC_GPIO_NUM;
+    c.pin_pwdn = PWDN_GPIO_NUM;
+    c.pin_reset = RESET_GPIO_NUM;
+    c.xclk_freq_hz = 20000000;
+    c.frame_size = CAM_FRAMESIZE;
+    c.pixel_format = PIXFORMAT_JPEG;
+    c.grab_mode = CAMERA_GRAB_LATEST; // always hand out the newest frame
+    c.fb_location = CAMERA_FB_IN_PSRAM;
+    c.jpeg_quality = JPEG_QUALITY;
+    c.fb_count = CAM_FB_COUNT;
+
+    esp_err_t err = esp_camera_init(&c);
+    if (err != ESP_OK)
+    {
+      Serial.printf("camera init failed: 0x%x\n", err);
+      return false;
+    }
+    g_currentFramesize = CAM_FRAMESIZE;
+
+    // Bias exposure brighter and allow more sensor gain for dim rooms.
+    sensor_t *s = esp_camera_sensor_get();
+    if (s)
+    {
+      s->set_hmirror(s, 1);
+      s->set_brightness(s, 1); // -2..2
+      s->set_ae_level(s, 1);   // -2..2, biases auto-exposure target brighter
+      s->set_gainceiling(s, GAINCEILING_8X);
+    }
+    return true;
   }
-  g_currentFramesize = CAM_FRAMESIZE;
 
-  // Bias exposure brighter and allow more sensor gain for dim rooms.
-  sensor_t* s = esp_camera_sensor_get();
-  if (s) {
-    s->set_brightness(s, 1);            // -2..2
-    s->set_ae_level(s, 1);              // -2..2, biases auto-exposure target brighter
-    s->set_gainceiling(s, GAINCEILING_8X);
+  camera_fb_t *grab() { return esp_camera_fb_get(); }
+  void release(camera_fb_t *fb)
+  {
+    if (fb)
+      esp_camera_fb_return(fb);
   }
-  return true;
-}
 
-camera_fb_t* grab()               { return esp_camera_fb_get(); }
-void release(camera_fb_t* fb)      { if (fb) esp_camera_fb_return(fb); }
-
-bool setFramesize(framesize_t fs) {
-  sensor_t* s = esp_camera_sensor_get();
-  if (!s) return false;
-  bool ok = s->set_framesize(s, fs) == 0;
-  if (ok) g_currentFramesize = fs;
-  return ok;
-}
-
-bool setGrayscale(bool enable) {
-  sensor_t* s = esp_camera_sensor_get();
-  if (!s) return false;
-  // Desaturating (rather than switching pixel_format to grayscale) keeps
-  // the hardware JPEG encoder in the loop — no software re-encode — and a
-  // flat chroma plane compresses to near-nothing under JPEG's DCT, so this
-  // shrinks the file for free. See the design spec's colormode section.
-  return s->set_saturation(s, enable ? -2 : 0) == 0;
-}
-
-uint16_t width() {
-  switch (g_currentFramesize) {
-    case FRAMESIZE_VGA:  return 640;
-    case FRAMESIZE_SVGA: return 800;
-    case FRAMESIZE_UXGA: return 1600;
-    default:             return CAM_WIDTH;
+  bool setFramesize(framesize_t fs)
+  {
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s)
+      return false;
+    bool ok = s->set_framesize(s, fs) == 0;
+    if (ok)
+      g_currentFramesize = fs;
+    return ok;
   }
-}
 
-uint16_t height() {
-  switch (g_currentFramesize) {
-    case FRAMESIZE_VGA:  return 480;
-    case FRAMESIZE_SVGA: return 600;
-    case FRAMESIZE_UXGA: return 1200;
-    default:             return CAM_HEIGHT;
+  bool setGrayscale(bool enable)
+  {
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s)
+      return false;
+    // The OV2640 grayscale mode is exposed as a sensor special effect, not just
+    // a saturation tweak. Use the built-in monochrome operation so the visible
+    // output actually turns black-and-white instead of only desaturating.
+    return s->set_special_effect(s, cam::grayscaleSpecialEffect(enable)) == 0;
   }
-}
+
+  bool setBrightness(int value)
+  {
+    if (value < -2 || value > 2)
+      return false;
+    sensor_t *s = esp_camera_sensor_get();
+    return s && s->set_brightness(s, value) == 0;
+  }
+
+  uint16_t width()
+  {
+    switch (g_currentFramesize)
+    {
+    case FRAMESIZE_VGA:
+      return 640;
+    case FRAMESIZE_SVGA:
+      return 800;
+    case FRAMESIZE_UXGA:
+      return 1600;
+    default:
+      return CAM_WIDTH;
+    }
+  }
+
+  uint16_t height()
+  {
+    switch (g_currentFramesize)
+    {
+    case FRAMESIZE_VGA:
+      return 480;
+    case FRAMESIZE_SVGA:
+      return 600;
+    case FRAMESIZE_UXGA:
+      return 1200;
+    default:
+      return CAM_HEIGHT;
+    }
+  }
 
 } // namespace cam
+#endif
+
+#ifndef ARDUINO
+int cam::grayscaleSpecialEffect(bool enable)
+{
+  return enable ? 2 : 0;
+}
 #endif

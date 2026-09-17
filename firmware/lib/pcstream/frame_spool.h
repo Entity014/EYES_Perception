@@ -14,6 +14,7 @@ public:
   bool hasPending();
   bool readNext(uint32_t& seq, uint8_t* buf, size_t bufCap, size_t& outLen);
   void popFront();
+  void clear();
 
 private:
   const char* path_ = nullptr;

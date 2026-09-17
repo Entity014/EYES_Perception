@@ -7,6 +7,18 @@
 #include "usbstream.h"
 #include "pcstream.h"
 
+#ifndef RECORDING_PRIORITY
+#define RECORDING_PRIORITY true
+#endif
+
+#ifndef ENABLE_USB_STREAM
+#define ENABLE_USB_STREAM false
+#endif
+
+#ifndef CAPTURE_CPU_MHZ
+#define CAPTURE_CPU_MHZ 240
+#endif
+
 static bool          g_sdOk    = false;
 static volatile bool g_capture = true;   // cleared when an OTA update starts
 
@@ -38,18 +50,25 @@ static void captureTask(void*) {
     camera_fb_t* fb = cam::grab();
     if (fb) {
       rec::onFrame(fb->buf, fb->len);
-      net::submitFrame(fb->buf, fb->len);
-      usb::submitFrame(fb->buf, fb->len);
-      pcstream::submitFrame(fb->buf, fb->len);
+      // An AVI recording must win over preview transports. Sending a JPEG can
+      // block on Wi-Fi/TCP (and USB when a host is attached), delaying the
+      // next camera buffer. Keep the live view active while idle, but give SD
+      // recording exclusive use of the capture loop.
+      const bool recordingPriorityActive = RECORDING_PRIORITY && rec::isRecording();
+      if (!recordingPriorityActive) {
+        net::submitFrame(fb->buf, fb->len);
+        if (ENABLE_USB_STREAM) usb::submitFrame(fb->buf, fb->len);
+        pcstream::submitFrame(fb->buf, fb->len);
+      }
       cam::release(fb);
     }
     rec::tick();
-    pcstream::tick();
+    if (!(RECORDING_PRIORITY && rec::isRecording())) pcstream::tick();
 
     if (net::consumeRecordToggle()) {
       if (!g_sdOk)                   led::set(LedPattern::DoubleBlink);
-      else if (rec::isRecording()) { rec::stop();  led::set(LedPattern::Off); }
-      else if (rec::start())         led::set(LedPattern::Recording);
+      else if (rec::isRecording()) { rec::stop(); led::set(LedPattern::Off); }
+      else if (rec::start())         { led::set(LedPattern::Recording); }
       else                          led::set(LedPattern::DoubleBlink);
     }
     if (rec::hadError()) { g_sdOk = false; led::set(LedPattern::FastError); }
@@ -62,7 +81,7 @@ static void captureTask(void*) {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  setCpuFrequencyMhz(160);          // enough for VGA MJPEG, noticeably cooler
+  setCpuFrequencyMhz(CAPTURE_CPU_MHZ); // prioritize JPEG encode and SD recording throughput
   led::begin();
 
   if (!cam::begin()) {

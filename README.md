@@ -36,6 +36,8 @@ firmware/
     ota/         ArduinoOTA + /update web form
     led/         status-LED pattern engine                                   [unit-tested]
   tools/usb-viewer/  static HTML page, no install — Web Serial API viewer
+server/               PC TCP ingest server, SQLite log, REST API, live WebSocket
+frontend/             Next.js live view and session archive
   test/          native (host) Unity test suites
   docs/hardware-verification.md
 docs/superpowers/
@@ -88,6 +90,7 @@ instead of it — both are fed from the same capture loop.
 | `WIFI_SSID` / `WIFI_PASS` | network to join (STA). Empty `WIFI_SSID` → AP-only |
 | `AP_SSID_PREFIX` / `AP_PASSWORD` | SoftAP used when STA is off or the join fails |
 | `OTA_HOSTNAME` / `OTA_PASSWORD` | mDNS name + OTA auth |
+| `PC_SERVER_HOST` / `PC_SERVER_PORT` | PC ingest server address (TCP, default port 9000) |
 | `JPEG_QUALITY` | 10 (best) … 18 (smaller/faster, lower latency) |
 | `CAM_FRAMESIZE` / `CAM_FB_COUNT` | resolution; 1 buffer = lowest latency |
 | `REC_FLUSH_INTERVAL_MS` | how often the AVI is flushed (power-loss window) |
@@ -100,7 +103,24 @@ instead of it — both are fed from the same capture loop.
 | `GET /stream` | `multipart/x-mixed-replace` MJPEG |
 | `GET /status` | JSON: `recording`, `file`, `fps`, `clients`, `sdFreeMB`, `sdOk` |
 | `POST /record` | toggle recording |
+| `POST /resolution` | set `vga`, `svga`, or `uxga` |
+| `POST /colormode` | set `color` or `gray` |
 | `GET/POST /update` | firmware upload form |
+
+## PC logging pipeline
+
+Start the ingest server on the PC, then start the frontend:
+
+```bash
+cd server && npm install && npm start
+cd frontend && npm install && npm run dev
+```
+
+Open `http://localhost:3000`. The server listens for firmware frames on TCP
+port `9000` and serves the frontend API and live WebSocket on port `8080`.
+Set `NEXT_PUBLIC_API_BASE` in `frontend/.env.local` if the API is hosted on a
+different machine. The Record button creates a session; the archive can
+preview frames and download a ZIP containing JPEGs and `metadata.csv`.
 
 ## WiFi behaviour
 

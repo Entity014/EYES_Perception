@@ -72,4 +72,9 @@ void FrameSpool::popFront() {
   }
   f.close();
 }
+
+void FrameSpool::clear() {
+  SD_MMC.remove(path_);
+  readOffset_ = 0;
+}
 #endif
