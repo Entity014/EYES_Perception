@@ -210,6 +210,7 @@ async function refreshPorts() {
 
 connectBtn.addEventListener('click', async () => {
   try {
+    if (!portSel.value) { message.textContent = 'No serial port selected — plug in the board and try again'; return; }
     await pywebview.api.connect(portSel.value);
     connectBtn.disabled = true;
     connectBtn.textContent = 'Connected';
@@ -261,7 +262,10 @@ function setDisconnected() {
   message.textContent = 'Disconnected';
 }
 
-refreshPorts();
+// pywebview injects window.pywebview.api asynchronously after the page
+// loads; calling refreshPorts() before that fires leaves the dropdown
+// empty with no retry. Wait for the ready event instead.
+window.addEventListener('pywebviewready', refreshPorts);
 </script>
 </body>
 </html>
