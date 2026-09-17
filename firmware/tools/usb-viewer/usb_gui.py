@@ -115,3 +115,148 @@ class UsbTransport:
                 self._reply_q.put(line)
                 if self._on_status and line.startswith("OK:"):
                     self._on_status(line)
+
+
+HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>XIAO Cam — USB</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #eee; text-align: center; padding: 1.5rem; }
+  button { font-size: 1rem; padding: 0.5rem 1.5rem; cursor: pointer; margin: 0.25rem; }
+  button:disabled { cursor: default; opacity: 0.5; }
+  #frame { max-width: 85vw; margin-top: 1rem; border: 1px solid #333; }
+  #stats, #message { margin-top: 0.5rem; color: #888; font-size: 0.9rem; }
+  .controls { margin-top: 1rem; }
+  label { display: inline-block; margin: 0 0.75rem; }
+</style>
+</head>
+<body>
+  <h1>XIAO Cam — USB</h1>
+  <select id="port"></select>
+  <button id="connect">Connect</button>
+  <div><img id="frame" alt="(not connected)"></div>
+  <div id="stats">0 fps</div>
+  <div class="controls">
+    <button id="record">Record</button>
+    <label>Resolution
+      <select id="resolution">
+        <option value="vga">VGA</option>
+        <option value="svga" selected>SVGA</option>
+        <option value="uxga">UXGA</option>
+      </select>
+    </label>
+    <label>Brightness
+      <input id="brightness" type="range" min="-2" max="2" step="1" value="0">
+    </label>
+    <label><input id="grayscale" type="checkbox"> Grayscale</label>
+  </div>
+  <div id="message">Ready</div>
+
+<script>
+const portSel = document.getElementById('port');
+const connectBtn = document.getElementById('connect');
+const img = document.getElementById('frame');
+const stats = document.getElementById('stats');
+const message = document.getElementById('message');
+let frameCount = 0, lastFpsTime = performance.now(), currentUrl = null;
+
+async function refreshPorts() {
+  const ports = await pywebview.api.list_ports();
+  portSel.innerHTML = ports.map(p => `<option value="${p}">${p}</option>`).join('');
+}
+
+connectBtn.addEventListener('click', async () => {
+  try {
+    await pywebview.api.connect(portSel.value);
+    connectBtn.disabled = true;
+    connectBtn.textContent = 'Connected';
+    message.textContent = 'Connected';
+  } catch (err) {
+    message.textContent = `connect failed: ${err}`;
+  }
+});
+
+document.getElementById('record').addEventListener('click', async () => {
+  try { message.textContent = await pywebview.api.record(); }
+  catch (err) { message.textContent = String(err); }
+});
+
+document.getElementById('resolution').addEventListener('change', async (e) => {
+  try { message.textContent = await pywebview.api.set_resolution(e.target.value); }
+  catch (err) { message.textContent = String(err); }
+});
+
+document.getElementById('brightness').addEventListener('change', async (e) => {
+  try { message.textContent = await pywebview.api.set_brightness(e.target.value); }
+  catch (err) { message.textContent = String(err); }
+});
+
+document.getElementById('grayscale').addEventListener('change', async (e) => {
+  try { message.textContent = await pywebview.api.set_grayscale(e.target.checked ? 'gray' : 'color'); }
+  catch (err) { message.textContent = String(err); }
+});
+
+// Called from Python (reader thread) via evaluate_js for every decoded frame.
+function pushFrame(base64Jpeg) {
+  if (currentUrl) URL.revokeObjectURL(currentUrl);
+  img.src = 'data:image/jpeg;base64,' + base64Jpeg;
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    stats.textContent = `${frameCount} fps`;
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+}
+
+refreshPorts();
+</script>
+</body>
+</html>
+"""
+
+
+class Api:
+    def __init__(self):
+        self._window = None
+        self._transport = UsbTransport(on_frame=self._push_frame)
+
+    def set_window(self, window):
+        self._window = window
+
+    def _push_frame(self, jpeg_bytes):
+        import base64
+        b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+        if self._window:
+            self._window.evaluate_js(f"pushFrame('{b64}')")
+
+    def list_ports(self):
+        return self._transport.list_ports()
+
+    def connect(self, port_name):
+        self._transport.connect(port_name)
+        return "connected"
+
+    def record(self):
+        return self._transport.send_command("RECORD")
+
+    def set_resolution(self, value):
+        return self._transport.send_command(f"RES:{value}")
+
+    def set_brightness(self, value):
+        return self._transport.send_command(f"BRIGHT:{value}")
+
+    def set_grayscale(self, value):
+        return self._transport.send_command(f"COLOR:{value}")
+
+
+if __name__ == "__main__":
+    import webview
+
+    api = Api()
+    window = webview.create_window("XIAO Cam — USB", html=HTML, js_api=api, width=900, height=700)
+    api.set_window(window)
+    webview.start()

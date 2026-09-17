@@ -1,0 +1,4 @@
+# firmware/tools/usb-viewer/requirements.txt
+pywebview>=4.0
+pyserial>=3.5
+pytest>=7.0

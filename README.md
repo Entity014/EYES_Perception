@@ -35,7 +35,7 @@ firmware/
     usbstream/   MJPEG frames over USB CDC serial (sync+length framed)
     ota/         ArduinoOTA + /update web form
     led/         status-LED pattern engine                                   [unit-tested]
-  tools/usb-viewer/  static HTML page, no install — Web Serial API viewer
+  tools/usb-viewer/  usb_gui.py — pywebview + pyserial desktop client
 server/               PC TCP ingest server, SQLite log, REST API, live WebSocket
 frontend/             Next.js live view and session archive
   test/          native (host) Unity test suites
@@ -75,13 +75,21 @@ or open `http://<device>/update` and upload `.pio/build/xiao/firmware.bin`.
 
 ### Viewing the stream over USB (no WiFi needed)
 
-With the board plugged into USB, open
-[`firmware/tools/usb-viewer/index.html`](firmware/tools/usb-viewer/index.html)
-directly in Chrome or Edge (double-click it, no server or install required),
-click **Connect**, and pick the board's serial port. It uses the
-[Web Serial API](https://developer.chrome.com/docs/capabilities/serial),
-so Firefox/Safari aren't supported. This runs alongside WiFi streaming, not
-instead of it — both are fed from the same capture loop.
+With the board plugged into USB, run the desktop client (no WiFi needed):
+
+```bash
+cd firmware/tools/usb-viewer
+pip install -r requirements.txt
+python3 usb_gui.py
+```
+
+Pick the board's serial port from the dropdown and click **Connect**. It has
+the same live view plus **Record**, **Resolution**, **Brightness**, and
+**Grayscale** controls as the WiFi frontend, all sent as text commands over
+the USB CDC serial link — see
+[`docs/superpowers/specs/2026-09-17-usb-gui-prototype-design.md`](docs/superpowers/specs/2026-09-17-usb-gui-prototype-design.md)
+for the wire protocol. This runs alongside WiFi streaming, not instead of
+it — both are fed from the same capture loop.
 
 ## Configuration (`firmware/config/config.h`)
 
