@@ -10,7 +10,6 @@ namespace {
   SemaphoreHandle_t g_serialLock = nullptr;
 
   SemaphoreHandle_t serialLock() {
-    if (!g_serialLock) g_serialLock = xSemaphoreCreateMutex();
     return g_serialLock;
   }
 
@@ -54,6 +53,10 @@ namespace {
 }
 
 namespace usb {
+  void begin() {
+    g_serialLock = xSemaphoreCreateMutex();
+  }
+
   void submitFrame(const uint8_t* buf, size_t len) {
     if (!Serial) return;   // no host has the USB CDC port open
     if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(50)) != pdTRUE) return;

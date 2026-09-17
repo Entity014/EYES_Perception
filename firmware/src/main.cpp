@@ -99,6 +99,7 @@ void setup() {
   pcstream::begin();
   ota::begin(onOtaStart);
   led::set(LedPattern::Off);
+  if (ENABLE_USB_STREAM) usb::begin();
 
   xTaskCreatePinnedToCore(captureTask, "capture", 8192, nullptr, 2, nullptr, 0);
 }

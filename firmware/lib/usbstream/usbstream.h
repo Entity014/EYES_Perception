@@ -4,6 +4,11 @@
 #include <cstdint>
 
 namespace usb {
+  // Creates the serial-write mutex. Call once from setup(), before the
+  // core-0 capture task is spawned, so the mutex exists before either core
+  // can touch it.
+  void begin();
+
   // Writes one frame to the USB CDC serial port as:
   //   0xAA 0x55 | len:u32 little-endian | JPEG bytes
   // No-op when no host has the port open, so a dropped/blocked receiver
