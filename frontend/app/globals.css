@@ -1,0 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+:root { --ink: #182522; --muted: #6a7974; --line: #d8e1dc; --paper: #f3f6f0; --lime: #d5ef63; --coral: #e8755d; --panel: #fbfcf8; }
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at 80% 10%, #e2ebd4 0, transparent 28%), var(--paper); color: var(--ink); font-family: Manrope, sans-serif; }
+button, select, input { font: inherit; }
+button, a { cursor: pointer; }
+.shell { max-width: 1280px; margin: auto; padding: 32px 5vw 64px; }
+.topbar { display: flex; align-items: flex-end; justify-content: space-between; padding-bottom: 34px; border-bottom: 1px solid var(--line); }
+.eyebrow, .section-label { margin: 0 0 10px; color: var(--muted); font: 500 11px 'DM Mono', monospace; letter-spacing: 0; }
+h1 { margin: 0; font-size: clamp(2rem, 5vw, 4.5rem); letter-spacing: 0; line-height: .98; font-weight: 800; }
+h1 span { color: var(--coral); }
+.nav-link { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--ink); padding-bottom: 4px; font-weight: 700; }
+.live-layout, .archive-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 48px; padding-top: 44px; }
+.viewfinder, .preview-panel { background: var(--panel); border: 1px solid var(--line); box-shadow: 10px 10px 0 #dfe8db; }
+.viewfinder-topline { display: flex; gap: 9px; align-items: center; padding: 13px 16px; color: var(--muted); font: 500 11px 'DM Mono', monospace; text-transform: uppercase; }
+.frame-count { margin-left: auto; }.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); }.status-dot.connected { background: #76a832; }.status-dot.connecting { background: #e1b93f; }
+.image-stage, .preview-stage { min-height: 420px; display: grid; place-items: center; background: #1c2522; overflow: hidden; }.image-stage img, .preview-stage img, .preview-stage video { display: block; max-width: 100%; max-height: 70vh; width: auto; height: auto; }
+.control-panel { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 22px 0; }.record-button, .player-controls button { border: 0; background: var(--ink); color: white; padding: 12px 17px; font-weight: 700; }.record-button.recording { background: var(--coral); }.record-glyph { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: currentColor; margin-right: 4px; }
+.control-panel label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }.control-panel select { border: 1px solid var(--line); background: var(--panel); padding: 10px; color: var(--ink); }.toggle-label { display: flex !important; align-items: center; margin-top: 18px; }.toggle-label input { accent-color: var(--coral); }.control-message { margin-left: auto; color: var(--muted); font: 11px 'DM Mono', monospace; }
+.side-note { padding-top: 10px; }.large-note { margin: 24px 0; font-size: 27px; line-height: 1.15; font-weight: 800; }.muted, .empty-message, .error-message { color: var(--muted); line-height: 1.7; }.error-message { color: var(--coral); }
+.archive-layout { grid-template-columns: minmax(240px, .7fr) minmax(0, 1.3fr); }.section-label { border-bottom: 1px solid var(--line); padding-bottom: 12px; }.session-list { display: grid; gap: 2px; }.session-row { display: grid; grid-template-columns: 65px 1fr auto; gap: 12px; align-items: center; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); padding: 15px 8px; }.session-row.selected { background: var(--lime); }.session-number, .complete, .active { font: 11px 'DM Mono', monospace; }.complete, .active { color: var(--muted); }.active { color: var(--coral); }.selection-prompt { min-height: 320px; display: grid; place-content: center; text-align: center; color: var(--muted); font-size: 22px; font-weight: 700; }.player-controls { display: flex; align-items: center; gap: 14px; padding: 16px; }.player-controls input { flex: 1; accent-color: var(--coral); }.player-controls span { font: 11px 'DM Mono', monospace; }.export-link { display: inline-block; margin: 0 16px 18px; color: var(--ink); font-size: 13px; font-weight: 800; }
+@media (max-width: 760px) { .shell { padding: 22px 20px 48px; }.topbar { align-items: flex-start; gap: 22px; flex-direction: column; }.live-layout, .archive-layout { grid-template-columns: 1fr; gap: 28px; padding-top: 28px; }.image-stage, .preview-stage { min-height: 240px; }.side-note { display: none; }.control-message { width: 100%; margin-left: 0; }.session-row { grid-template-columns: 52px 1fr; }.session-row > :last-child { grid-column: 2; } }

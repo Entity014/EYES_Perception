@@ -2,4 +2,6 @@
 .vscode/
 .superpowers/
 .worktrees/
+.claude/
+.codegraph/
 firmware/config/config.h
