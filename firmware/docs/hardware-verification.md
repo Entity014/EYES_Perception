@@ -45,6 +45,24 @@ Board: Seeed XIAO ESP32-S3 Sense + microSD card inserted.
 19. Start a recording, then trigger OTA -> the AVI is finalized (still plays)
     before the device reboots.
 
+## USB GUI (usb_gui.py)
+
+20. `cd firmware && pio run -e xiao -t upload` with `ENABLE_USB_STREAM=true`
+    (set in `platformio.ini`'s `build_flags` or `config.h`, matching however
+    the existing `usb-viewer` build was enabled).
+21. `cd firmware/tools/usb-viewer && pip install -r requirements.txt && python3 usb_gui.py`.
+22. Pick the board's port, click **Connect** -> live video appears, fps counter moves.
+23. Click **Record** -> firmware LED goes solid (recording), click again -> LED off,
+    matching the same LED behavior as the WiFi **Record** button.
+24. Change **Resolution** to UXGA -> frame size visibly changes, no crash.
+25. Drag **Brightness** -> image visibly brightens/dims.
+26. Check **Grayscale** -> stream turns monochrome.
+27. Open `http://192.168.4.1/` (or STA address) in a browser at the same time
+    -> WiFi live view keeps working unaffected (both transports share one
+    capture loop, per the design spec).
+28. Unplug the USB cable mid-stream -> GUI shows a disconnected state, no
+    crash; replug and **Connect** again -> stream resumes.
+
 ## Build-time gate (no hardware)
 - `cd firmware && pio test -e native` -> all suites pass
   (test_avi_writer, test_led_pattern, test_recorder_names).
