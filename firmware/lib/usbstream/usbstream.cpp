@@ -23,34 +23,16 @@ namespace {
     return g_serialLock;
   }
 
-  // ESP32-S3's USBCDC::write() has an internal loop with NO overall
-  // timeout: if the host isn't draining its OS-level read buffer fast
-  // enough, tud_cdc_n_write_available() keeps returning 0 and the call
-  // just spins until space frees up (or the port disconnects). Since every
-  // writer here holds g_serialLock across its Serial.write() call, a
-  // write that blocks this way holds the lock for as long as the host
-  // stays behind -- seconds, if the host's reader is doing something slow
-  // per frame (e.g. a synchronous per-frame UI update) -- starving every
-  // other writer (replies, file chunks) for that whole time. Checking
-  // availableForWrite() before ever taking the lock is what actually
-  // fixes this: only call write() when it can complete without blocking.
-  bool waitForWriteSpace(size_t needed, uint32_t maxWaitMs) {
-    uint32_t waited = 0;
-    while ((size_t)Serial.availableForWrite() < needed) {
-      if (waited >= maxWaitMs) return false;
-      vTaskDelay(pdMS_TO_TICKS(10));
-      waited += 10;
-    }
-    return true;
-  }
-
-  // Set for the duration of handleDownload(). submitFrame() checks this and
-  // skips entirely (not just backing off) while a download is in progress:
+  // Set as soon as handleDownload() commits to a transfer -- BEFORE it even
+  // writes the "OK" reply, not just around the chunk loop. submitFrame()
+  // checks this and skips entirely (not just backing off) while it's set:
   // the capture task otherwise keeps re-acquiring g_serialLock every frame,
-  // which starves the file-chunk writer badly enough on a real link that a
-  // multi-chunk transfer can fail to ever get its EOF chunk out inside its
-  // own timeout. Live view simply freezes on the last frame until the
-  // download finishes, which is a fine tradeoff for a prototype tool.
+  // and each Serial.write() here has no overall timeout of its own (see
+  // usb::submitFrame's comment) -- if one is ever slow, everything else,
+  // including handleDownload()'s own first reply, would sit waiting for a
+  // lock that frame writes keep re-taking. Setting this before the OK
+  // reply closes that window; live view simply freezes on the last frame
+  // until the download finishes, a fine tradeoff for a prototype tool.
   volatile bool g_downloading = false;
 
   char g_lineBuf[64];
@@ -62,8 +44,6 @@ namespace {
     // 50ms for the lock: at larger resolutions (e.g. UXGA) submitFrame()
     // can plausibly hold the lock for longer than 50ms writing a full JPEG
     // over USB CDC, and a short timeout here would silently drop the reply.
-    size_t needed = strlen(line) + 1;
-    if (!waitForWriteSpace(needed, 1000)) return; // host too far behind; drop this reply
     if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(500)) != pdTRUE) return;
     Serial.print(line);
     Serial.print('\n');
@@ -87,7 +67,6 @@ namespace {
   // the downloaded file, which submitFrame()'s drop-on-contention
   // tradeoff (fine for a live view) is not acceptable for.
   bool sendFileChunk(const uint8_t* buf, size_t len) {
-    if (!waitForWriteSpace(6 + len, 5000)) return false; // host stalled; abort the transfer
     if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(2000)) != pdTRUE) return false;
     uint8_t header[6] = {
       0xDD, 0x44,
@@ -110,8 +89,11 @@ namespace {
     if (!video) { writeReply("ERR:no recording"); return; }
     video.seek(0); // defensive: don't assume FILE_READ guarantees position 0
 
-    writeReply("OK"); // from here on, chunks follow instead of another text reply
+    // Stop new frame writes from starting BEFORE attempting our own reply,
+    // not after it -- otherwise this reply and ongoing frame writes are
+    // still racing for the lock exactly like every other command was.
     g_downloading = true;
+    writeReply("OK"); // from here on, chunks follow instead of another text reply
     uint8_t buf[2048];
     for (;;) {
       size_t n = video.read(buf, sizeof(buf));
@@ -155,7 +137,6 @@ namespace usb {
   void submitFrame(const uint8_t* buf, size_t len) {
     if (!Serial) return;       // no host has the USB CDC port open
     if (g_downloading) return; // yield the wire entirely to the file transfer
-    if ((size_t)Serial.availableForWrite() < 6 + len) return; // host can't keep up; drop this frame
     if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(50)) != pdTRUE) return;
 
     uint8_t header[6] = {
