@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <config.h>
 #include "camera.h"
 #include "recorder.h"
 #include "streamer.h"
