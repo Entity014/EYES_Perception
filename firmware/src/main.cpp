@@ -106,5 +106,6 @@ void setup() {
 void loop() {
   ota::handle();
   net::handle();
+  if (ENABLE_USB_STREAM) usb::pollCommands();
   delay(2);
 }
