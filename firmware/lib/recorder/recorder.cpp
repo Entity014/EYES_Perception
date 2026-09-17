@@ -87,22 +87,14 @@ bool start() {
   if (g_recording) return true;
   if (!g_sdOk) return false;
   formatVideoPath(g_counter, g_path, sizeof(g_path));
-  // Reserve the counter BEFORE opening the video file. counter.txt is a
-  // separate file: opening + writing + closing it while the video file's
-  // just-written 224-byte header is still sitting uncommitted (no flush()
-  // yet) loses that header on this SD_MMC/FatFs stack -- every static
-  // header field (RIFF/AVI /LIST/hdrl/avih/flags/streams/movi tags) came
-  // back zeroed on real hardware, while fields patched later in end() (a
-  // clean, uninterrupted seek+write sequence with no other file opened in
-  // between) were intact. Doing this first also makes the original
-  // "reserve immediately so a crash never reuses it" intent stronger: the
-  // number is now reserved even if opening/writing the video file itself
-  // fails.
+  // Reserve the counter before opening the video file (also makes the
+  // original "reserve immediately so a crash never reuses it" intent
+  // stronger: reserved even if opening/writing the video file itself fails).
   saveCounter(g_counter + 1);
   g_counter += 1;
   if (!g_sink.begin(g_path)) { g_error = true; return false; }
   if (!g_writer.begin(g_sink, cam::width(), cam::height())) { g_sink.close(); g_error = true; return false; }
-  g_sink.flush(); // commit the header now, belt-and-suspenders against any future interleaved file I/O
+  g_sink.flush();
   g_recording = true;
   g_startMs = millis();
   g_lastFlushMs = g_startMs;

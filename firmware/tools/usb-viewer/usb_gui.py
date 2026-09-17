@@ -317,7 +317,7 @@ recordBtn.addEventListener('click', async () => {
 document.getElementById('download').addEventListener('click', async (e) => {
   const btn = e.target;
   btn.disabled = true;
-  message.textContent = 'Downloading (live view will stutter until it finishes)...';
+  message.textContent = 'Downloading (live view will freeze until it finishes, can take a while for larger files)...';
   try { message.textContent = await pywebview.api.download(); }
   catch (err) { message.textContent = `download failed: ${err}`; }
   finally { btn.disabled = false; }
@@ -416,7 +416,13 @@ class Api:
         os.makedirs(downloads_dir, exist_ok=True)
         filename = time.strftime("recording_%Y%m%d_%H%M%S.avi")
         save_path = os.path.join(downloads_dir, filename)
-        self._transport.download(save_path)
+        # Effective throughput is USB-CDC-bandwidth-bound, roughly ~200KB/s in
+        # testing -- a few-MB recording can legitimately take most of a
+        # minute. Generous on purpose: retrying a still-in-flight download
+        # (because an earlier attempt's timeout was too impatient) makes the
+        # new attempt capture the old one's late-arriving tail bytes instead
+        # of its own, corrupting the file. Let one attempt actually finish.
+        self._transport.download(save_path, timeout=120.0)
         return f"saved to {save_path}"
 
 

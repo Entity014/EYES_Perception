@@ -19,7 +19,7 @@ private:
   uint32_t frameCount_ = 0;
   uint32_t bytesWritten_ = 0;
   uint32_t maxFrame_ = 0;
+  uint16_t width_ = 0;
+  uint16_t height_ = 0;
   std::vector<Entry> index_;
-
-  bool patch32(uint32_t off, uint32_t val);
 };
