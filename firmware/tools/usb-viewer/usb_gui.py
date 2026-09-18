@@ -168,7 +168,12 @@ class UsbTransport:
         port = self._port
         return port is not None and port.is_open
 
-    def send_command(self, line, timeout=2.0):
+    def send_command(self, line, timeout=5.0):
+        # Must stay comfortably above usbstream.cpp's writeReply() lock-wait
+        # budget (2000ms as of this writing) -- a client timeout equal to or
+        # close to that ties the race under live-frame contention: the
+        # firmware's reply can arrive just after the client already gave up,
+        # surfacing a working command (e.g. RECORD) as a client-side failure.
         port = self._port
         if port is None or not port.is_open:
             raise RuntimeError("not connected")
@@ -375,18 +380,46 @@ window.addEventListener('pywebviewready', refreshPorts);
 class Api:
     def __init__(self):
         self._window = None
+        # evaluate_js() crosses into the webview's own event loop and can
+        # block for a non-trivial time (tens to hundreds of ms). Calling it
+        # directly from UsbTransport's reader thread (as this used to do)
+        # risks stalling that thread long enough for the OS-level USB CDC
+        # buffer to fill and silently drop incoming bytes -- observed in
+        # practice as a DOWNLOAD losing a few KB from the middle of a file
+        # right after live view had been running. A dedicated pusher thread
+        # with a single-slot "latest frame wins" handoff keeps the reader
+        # thread's loop free of any UI-side latency.
+        self._latest_frame = None
+        self._frame_lock = threading.Lock()
+        self._frame_available = threading.Event()
+        self._pusher_thread = threading.Thread(target=self._pusher_loop, daemon=True)
+        self._pusher_thread.start()
         self._transport = UsbTransport(
-            on_frame=self._push_frame, on_disconnect=self._handle_disconnect
+            on_frame=self._queue_frame, on_disconnect=self._handle_disconnect
         )
 
     def set_window(self, window):
         self._window = window
 
-    def _push_frame(self, jpeg_bytes):
+    def _queue_frame(self, jpeg_bytes):
+        with self._frame_lock:
+            self._latest_frame = jpeg_bytes
+        self._frame_available.set()
+
+    def _pusher_loop(self):
         import base64
-        b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-        if self._window:
-            self._window.evaluate_js(f"pushFrame('{b64}')")
+        while True:
+            self._frame_available.wait()
+            self._frame_available.clear()
+            with self._frame_lock:
+                frame, self._latest_frame = self._latest_frame, None
+            if frame is None or self._window is None:
+                continue
+            b64 = base64.b64encode(frame).decode("ascii")
+            try:
+                self._window.evaluate_js(f"pushFrame('{b64}')")
+            except Exception:
+                pass
 
     def _handle_disconnect(self):
         if self._window:
