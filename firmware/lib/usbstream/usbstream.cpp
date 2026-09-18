@@ -41,10 +41,13 @@ namespace {
   void writeReply(const char* line) {
     // Replies are infrequent, human-triggered events (not the hot frame
     // path), so it's cheap to wait meaningfully longer than submitFrame()'s
-    // 50ms for the lock: at larger resolutions (e.g. UXGA) submitFrame()
-    // can plausibly hold the lock for longer than 50ms writing a full JPEG
-    // over USB CDC, and a short timeout here would silently drop the reply.
-    if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(500)) != pdTRUE) return;
+    // 50ms for the lock: at larger resolutions (e.g. UXGA/SVGA) a single
+    // submitFrame() call can hold the lock for several hundred ms writing a
+    // full JPEG over USB CDC at 921600 baud, and 500ms was measured to be
+    // too short -- it silently dropped "OK" replies (the command itself,
+    // e.g. RECORD, still took effect; only the ack over the wire was lost).
+    // Match sendFileChunk()'s 2000ms budget instead.
+    if (xSemaphoreTake(serialLock(), pdMS_TO_TICKS(2000)) != pdTRUE) return;
     Serial.print(line);
     Serial.print('\n');
     xSemaphoreGive(serialLock());

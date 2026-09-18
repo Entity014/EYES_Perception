@@ -87,14 +87,11 @@ bool start() {
   if (g_recording) return true;
   if (!g_sdOk) return false;
   formatVideoPath(g_counter, g_path, sizeof(g_path));
-  // Reserve the counter before opening the video file (also makes the
-  // original "reserve immediately so a crash never reuses it" intent
-  // stronger: reserved even if opening/writing the video file itself fails).
-  saveCounter(g_counter + 1);
-  g_counter += 1;
   if (!g_sink.begin(g_path)) { g_error = true; return false; }
   if (!g_writer.begin(g_sink, cam::width(), cam::height())) { g_sink.close(); g_error = true; return false; }
-  g_sink.flush();
+  // reserve this number immediately so a crash never reuses it
+  saveCounter(g_counter + 1);
+  g_counter += 1;
   g_recording = true;
   g_startMs = millis();
   g_lastFlushMs = g_startMs;
